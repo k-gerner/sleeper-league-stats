@@ -69,6 +69,11 @@ function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek) {
       team,
       points: Number(row.points) || 0,
       playersPoints: row.players_points || {},
+      rosteredPlayers: Object.entries(row.players_points || {}).map(([id, score]) => ({
+        id,
+        name: playerName(id),
+        points: Number(score) || 0,
+      })),
       benchPoints: bench.total,
       topBenchPlayer: bench.topPlayer,
       starters,
@@ -101,6 +106,12 @@ function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek) {
     })
 
   const highScore = [...rosterRows].sort((a, b) => b.points - a.points)[0] || null
+  const highestScoringPlayer = rosterRows.flatMap((team) => team.starters.map((starter) => ({
+    id: starter.id,
+    name: starter.name,
+    points: starter.points,
+    team: team.team,
+  }))).filter((player) => player.points > 0).sort((a, b) => b.points - a.points)[0] || null
   const closest = [...matchups].sort((a, b) => a.margin - b.margin)[0] || null
   const blowout = [...matchups].sort((a, b) => b.margin - a.margin)[0] || null
   const heartbreak = matchups.map((matchup) => matchup.loser).sort((a, b) => b.points - a.points)[0] || null
@@ -119,6 +130,7 @@ function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek) {
     teams: rosterRows,
     matchups: matchups.sort((a, b) => a.margin - b.margin),
     highScore,
+    highestScoringPlayer,
     closest,
     blowout,
     heartbreak,

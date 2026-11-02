@@ -97,14 +97,15 @@ function Sidebar({ active, setActive, open, onClose, favoriteTeam, onFavoriteTea
   }
 
   const nav = [
-    { label: 'League HQ', icon: LayoutDashboard }, { label: 'Matchups', icon: Activity },
-    { label: 'Standings', icon: BarChart3 },
+    { label: 'Overview', icon: LayoutDashboard },
     { label: 'Awards & records', icon: Trophy },
+    { label: 'Standings', icon: BarChart3 },
+    { label: 'Matchups', icon: Activity },
   ]
   return <>
     {open && <button className="mobile-scrim" aria-label="Close menu" onClick={onClose} />}
     <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
-      <div className="brand"><div className="brand-mark"><span>SC</span><span className="brand-dot" /></div><div><div className="brand-name">sunday club</div><div className="brand-caption">FANTASY, WITH RECEIPTS</div></div><button className="icon-button close-menu" onClick={onClose} aria-label="Close menu"><X size={18} /></button></div>
+      <div className="brand"><button className="icon-button close-menu" onClick={onClose} aria-label="Close menu"><X size={18} /></button></div>
       <div className="league-switcher"><div className="league-emblem">🏈</div><div className="switcher-copy"><strong>{league?.name || 'Loading league…'}</strong><span>{league ? `${league.season} season · ${league.teamCount} teams` : 'Sleeper league'}</span></div></div>
       <div className="favorite-picker" ref={pickerRef}>
         <span className="favorite-label">YOUR TEAM COLORS</span>
@@ -136,7 +137,6 @@ function Sidebar({ active, setActive, open, onClose, favoriteTeam, onFavoriteTea
       <div className="nav-label">YOUR LEAGUE</div>
       <nav className="main-nav">{nav.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${active === label ? 'nav-active' : ''}`} onClick={() => { setActive(label); onClose() }}><Icon size={17} strokeWidth={1.9} /><span>{label}</span></button>)}</nav>
       <div className="sidebar-spacer" />
-      <div className="sidebar-note"><Sparkles size={16} /><div><strong>Your league, in its lore era.</strong><span>Fresh stats every week.</span></div></div>
     </aside>
   </>
 }
@@ -404,6 +404,7 @@ function AwardsPage({ leagueData }) {
     { icon: '🪙', title: 'Weakest win', result: seasonWeeks.flatMap(({ week, weekData }) => (weekData.matchups || []).map((matchup) => ({ week, team: matchup.winner, value: matchup.winner.points }))).filter((item) => item.team).sort((a, b) => a.value - b.value)[0], format: (record) => `${formatPoints(record.value)} pts` },
     { icon: '💥', title: 'Biggest blowout', result: seasonWeeks.map(({ week, weekData }) => ({ week, matchup: weekData.blowout, value: weekData.blowout?.margin })).filter((item) => item.matchup).sort((a, b) => b.value - a.value)[0], format: (record) => `${formatPoints(record.value)} pts` },
     { icon: '🪑', title: 'Highest-scoring benched player', result: seasonWeeks.map(({ week, weekData }) => ({ week, team: weekData.benchPlayerLeader, value: weekData.benchPlayerLeader?.topBenchPlayer?.points, player: weekData.benchPlayerLeader?.topBenchPlayer?.name })).filter((item) => item.team).sort((a, b) => b.value - a.value)[0], format: (record) => `${record.player} · ${formatPoints(record.value)} pts` },
+    { icon: '🌟', title: 'Highest-scoring rostered player', result: seasonWeeks.flatMap(({ week, weekData }) => (weekData.teams || []).flatMap((team) => (team.rosteredPlayers || []).map((player) => ({ week, team, player, value: player.points })))).filter((item) => item.value > 0).sort((a, b) => b.value - a.value)[0], format: (record) => `${record.player.name} · ${formatPoints(record.value)} pts` },
   ].filter((record) => record.result)
 
   return <div className="page-content awards-page">
@@ -495,7 +496,7 @@ function App() {
         <div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line" /> {leagueData.league.season} SEASON <span className="eyebrow-sun">✳</span> WEEK {week}</div><h1>Week {week}, in focus <span className="wave">✦</span></h1><p className="welcome-subtitle">{weekData.isLive ? 'Live scores are rolling in across the league.' : 'The league has entered its “every point matters” era.'}</p></div><WeekPicker weeks={leagueData.weeks} week={week} currentWeek={leagueData.currentWeek} lastCompletedWeek={leagueData.lastCompletedWeek} onChange={setSelectedWeek} /></div>
         <section className="featured-banner"><div className="banner-grain" /><div className="banner-content"><div className="live-label"><span /> WEEK {week} {weekData.isLive ? 'LIVE' : 'RECAP'} <span className="label-separator">/</span> {weekData.isLive ? 'IN PROGRESS' : 'FINAL'}</div><h2>{weekData.highScore?.team.name || 'League scoreboard'}<br />made a <em>statement.</em></h2><p>{weekData.highScore ? `${formatPoints(weekData.highScore.points)} points led the week${weekData.closest ? `; ${weekData.closest.margin.toFixed(1)} points separated the closest matchup` : ''}.` : 'Matchup scores are not available for this week yet.'}</p><button className="banner-button" onClick={() => setShowRecap(true)}>Read this week’s recap <ArrowRight size={15} /></button></div><div className="banner-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="banner-ball">🏈</div><div className="art-star star-one">✳</div><div className="art-star star-two">✦</div><div className="art-score"><span>WEEK HIGH</span><strong>{weekData.highScore ? formatPoints(weekData.highScore.points) : '—'}</strong><small>PTS</small></div><div className="banner-sticker">{weekData.isLive ? 'LIVE\nSCORES' : 'WEEK\nWINNER'}</div></div><div className="banner-index">{String(week).padStart(2, '0')} <span>—</span> {String(leagueData.currentWeek).padStart(2, '0')}</div></section>
 
-        <section className="stats-grid" aria-label="League highlights"><StatCard icon={Trophy} label="Weekly high score" value={weekData.highScore ? formatPoints(weekData.highScore.points) : '—'} note={weekData.highScore?.team.name || 'No scores yet'} /><StatCard icon={Flame} label="Closest matchup" value={weekData.closest ? `${formatPoints(weekData.closest.margin)} pts` : '—'} note={weekData.closest?.winner.team.name || 'No matchup yet'} /><StatCard icon={Gauge} label="League average" value={formatPoints(weekData.average)} note={`${leagueData.league.teamCount} teams this week`} /><StatCard icon={Shield} label="Points left on bench" value={formatPoints(weekData.benchTotal)} note={weekData.benchLeader?.team.name || 'Across the league'} noteTone="negative" /></section>
+        <section className="stats-grid" aria-label="League highlights"><StatCard icon={Trophy} label="Weekly high score" value={weekData.highScore ? formatPoints(weekData.highScore.points) : '—'} note={weekData.highScore?.team.name || 'No scores yet'} /><StatCard icon={Flame} label="Closest matchup" value={weekData.closest ? `${formatPoints(weekData.closest.margin)} pts` : '—'} note={weekData.closest?.winner.team.name || 'No matchup yet'} /><StatCard icon={Gauge} label="League average" value={formatPoints(weekData.average)} note={`${leagueData.league.teamCount} teams this week`} /><StatCard icon={Shield} label="Highest scoring player" value={weekData.highestScoringPlayer ? `${formatPoints(weekData.highestScoringPlayer.points)} pts` : '—'} note={weekData.highestScoringPlayer ? `${weekData.highestScoringPlayer.name} · ${weekData.highestScoringPlayer.team.name}` : 'No player scores yet'} /></section>
 
         <div className="dashboard-grid">
           <div className="left-column">
