@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3, Check,
-  CalendarDays, ChevronDown, ChevronRight, CircleHelp, Flame, Gauge,
+  CalendarDays, ChevronDown, ChevronRight, Flame, Gauge,
   LayoutDashboard, LoaderCircle, Menu, Moon, Search, Shield, Sparkles, Sun,
   Trophy, X, RefreshCw,
 } from 'lucide-react'
 import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { fetchLeagueDashboard, formatPoints } from './sleeperData.js'
+import { fetchLeagueDashboard, fetchNflWeekStatuses, formatPoints } from './sleeperData.js'
 
 const teamThemes = [
   { code: 'ARI', name: 'Arizona Cardinals', primary: '#97233f', accent: '#ffb612' },
@@ -44,6 +44,7 @@ const teamThemes = [
   { code: 'TEN', name: 'Tennessee Titans', primary: '#0c2340', accent: '#4b92db' },
   { code: 'WAS', name: 'Washington Commanders', primary: '#5a1414', accent: '#ffb612' },
 ]
+const teamThemeByCode = Object.fromEntries(teamThemes.map((team) => [team.code, team]))
 
 function Avatar({ initials, color, src, fallbackSrc, small = false }) {
   const [useFallback, setUseFallback] = useState(false)
@@ -60,7 +61,7 @@ function Avatar({ initials, color, src, fallbackSrc, small = false }) {
   return <span className={`avatar ${small ? 'avatar-sm' : ''}`} style={{ '--avatar-color': color }}>{imageSrc ? <img src={imageSrc} alt="" loading="lazy" decoding="async" onError={handleImageError} /> : initials}</span>
 }
 
-function Sidebar({ active, setActive, open, onClose, favoriteTeam, onFavoriteTeamChange, league }) {
+function FavoriteTeamPicker({ favoriteTeam, onFavoriteTeamChange, compact = false }) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [teamSearch, setTeamSearch] = useState('')
   const pickerRef = useRef(null)
@@ -96,8 +97,39 @@ function Sidebar({ active, setActive, open, onClose, favoriteTeam, onFavoriteTea
     setTeamSearch('')
   }
 
+  return <div className={`favorite-picker ${compact ? 'favorite-picker-compact' : ''}`} ref={pickerRef}>
+    {!compact && <span className="favorite-label">YOUR TEAM COLORS</span>}
+    <button type="button" className={`team-select-trigger ${pickerOpen ? 'picker-trigger-open' : ''}`} aria-haspopup="listbox" aria-expanded={pickerOpen} aria-label={`Favorite team: ${favoriteTeam.name}`} onClick={() => setPickerOpen((current) => !current)}>
+      <span className="team-select-swatch" style={{ '--swatch-primary': favoriteTeam.primary, '--swatch-accent': favoriteTeam.accent }}><span /></span>
+      <span className="team-select-copy"><strong>{favoriteTeam.name}</strong>{!compact && <small>Favorite team</small>}</span>
+      <span className="favorite-code">{favoriteTeam.code}</span>
+      <ChevronDown size={15} className={`team-select-chevron ${pickerOpen ? 'chevron-rotated' : ''}`} />
+    </button>
+    {pickerOpen && <div className="team-picker-popover">
+      <div className="picker-popover-heading"><div><strong>Pick your colors</strong><span>Choose your favorite NFL team</span></div><button type="button" className="picker-close" aria-label="Close team picker" onClick={() => { setPickerOpen(false); setTeamSearch('') }}><X size={16} /></button></div>
+      <label className="team-picker-search"><Search size={15} /><input type="search" value={teamSearch} onChange={(event) => setTeamSearch(event.target.value)} placeholder="Search 32 teams" aria-label="Search NFL teams" /></label>
+      <div className="team-picker-options" role="listbox" aria-label="NFL teams">
+        {filteredTeams.map((team) => <button type="button" role="option" aria-selected={favoriteTeam.code === team.code} className={`team-picker-option ${favoriteTeam.code === team.code ? 'team-option-selected' : ''}`} onKeyDown={(event) => {
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          const options = [...(pickerRef.current?.querySelectorAll('[role="option"]') || [])]
+          const currentIndex = options.indexOf(event.currentTarget)
+          const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
+          options[nextIndex]?.focus()
+        }} onClick={() => selectFavoriteTeam(team.code)} key={team.code}>
+          <span className="team-option-swatch" style={{ '--swatch-primary': team.primary, '--swatch-accent': team.accent }}><span /></span><span className="team-option-name">{team.name}</span><span className="team-option-code">{team.code}</span>{favoriteTeam.code === team.code && <Check size={15} className="team-option-check" />}
+        </button>)}
+        {filteredTeams.length === 0 && <div className="no-teams-found">No teams match “{teamSearch}”</div>}
+      </div>
+      <div className="picker-popover-footer"><span className="footer-color-dots"><i /><i /></span> Colors apply instantly and save in this browser</div>
+    </div>}
+  </div>
+}
+
+function Sidebar({ active, setActive, open, onClose, favoriteTeam, onFavoriteTeamChange, league, darkMode, onToggleDarkMode }) {
+
   const nav = [
-    { label: 'Overview', icon: LayoutDashboard },
+    { label: 'Recap', icon: LayoutDashboard },
     { label: 'Awards & records', icon: Trophy },
     { label: 'Standings', icon: BarChart3 },
     { label: 'Matchups', icon: Activity },
@@ -107,38 +139,27 @@ function Sidebar({ active, setActive, open, onClose, favoriteTeam, onFavoriteTea
     <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
       <div className="brand"><button className="icon-button close-menu" onClick={onClose} aria-label="Close menu"><X size={18} /></button></div>
       <div className="league-switcher"><div className="league-emblem">🏈</div><div className="switcher-copy"><strong>{league?.name || 'Loading league…'}</strong><span>{league ? `${league.season} season · ${league.teamCount} teams` : 'Sleeper league'}</span></div></div>
-      <div className="favorite-picker" ref={pickerRef}>
-        <span className="favorite-label">YOUR TEAM COLORS</span>
-        <button type="button" className={`team-select-trigger ${pickerOpen ? 'picker-trigger-open' : ''}`} aria-haspopup="listbox" aria-expanded={pickerOpen} aria-label={`Favorite team: ${favoriteTeam.name}`} onClick={() => setPickerOpen((current) => !current)}>
-          <span className="team-select-swatch" style={{ '--swatch-primary': favoriteTeam.primary, '--swatch-accent': favoriteTeam.accent }}><span /></span>
-          <span className="team-select-copy"><strong>{favoriteTeam.name}</strong><small>Favorite team</small></span>
-          <span className="favorite-code">{favoriteTeam.code}</span>
-          <ChevronDown size={15} className={`team-select-chevron ${pickerOpen ? 'chevron-rotated' : ''}`} />
-        </button>
-        {pickerOpen && <div className="team-picker-popover">
-          <div className="picker-popover-heading"><div><strong>Pick your colors</strong><span>Choose your favorite NFL team</span></div><button type="button" className="picker-close" aria-label="Close team picker" onClick={() => { setPickerOpen(false); setTeamSearch('') }}><X size={16} /></button></div>
-          <label className="team-picker-search"><Search size={15} /><input type="search" value={teamSearch} onChange={(event) => setTeamSearch(event.target.value)} placeholder="Search 32 teams" aria-label="Search NFL teams" /></label>
-          <div className="team-picker-options" role="listbox" aria-label="NFL teams">
-            {filteredTeams.map((team) => <button type="button" role="option" aria-selected={favoriteTeam.code === team.code} className={`team-picker-option ${favoriteTeam.code === team.code ? 'team-option-selected' : ''}`} onKeyDown={(event) => {
-              if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-              event.preventDefault()
-              const options = [...(pickerRef.current?.querySelectorAll('[role="option"]') || [])]
-              const currentIndex = options.indexOf(event.currentTarget)
-              const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
-              options[nextIndex]?.focus()
-            }} onClick={() => selectFavoriteTeam(team.code)} key={team.code}>
-              <span className="team-option-swatch" style={{ '--swatch-primary': team.primary, '--swatch-accent': team.accent }}><span /></span><span className="team-option-name">{team.name}</span><span className="team-option-code">{team.code}</span>{favoriteTeam.code === team.code && <Check size={15} className="team-option-check" />}
-            </button>)}
-            {filteredTeams.length === 0 && <div className="no-teams-found">No teams match “{teamSearch}”</div>}
-          </div>
-          <div className="picker-popover-footer"><span className="footer-color-dots"><i /><i /></span> Colors apply instantly and save in this browser</div>
-        </div>}
-      </div>
+      <FavoriteTeamPicker favoriteTeam={favoriteTeam} onFavoriteTeamChange={onFavoriteTeamChange} />
       <div className="nav-label">YOUR LEAGUE</div>
-      <nav className="main-nav">{nav.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${active === label ? 'nav-active' : ''}`} onClick={() => { setActive(label); onClose() }}><Icon size={17} strokeWidth={1.9} /><span>{label}</span></button>)}</nav>
+      <nav className="main-nav">{nav.map(({ label, icon: Icon }) => <button key={label} className={`nav-item ${active === label || (label === 'Recap' && active === 'League HQ') ? 'nav-active' : ''}`} onClick={() => { setActive(label); onClose() }}><Icon size={17} strokeWidth={1.9} /><span>{label}</span></button>)}</nav>
       <div className="sidebar-spacer" />
+      <button className="theme-toggle sidebar-theme-toggle" onClick={onToggleDarkMode} aria-label={`Switch to ${darkMode ? 'light' : 'dark'} mode`} aria-pressed={darkMode}>{darkMode ? <Sun size={17} /> : <Moon size={17} />}<span>{darkMode ? 'Light mode' : 'Dark mode'}</span></button>
     </aside>
   </>
+}
+
+function MobileTabBar({ active, setActive }) {
+  const nav = [
+    { label: 'Recap', icon: LayoutDashboard },
+    { label: 'Awards & records', icon: Trophy },
+    { label: 'Standings', icon: BarChart3 },
+    { label: 'Matchups', icon: Activity },
+  ]
+  return <nav className="mobile-tab-bar" aria-label="League sections">
+    {nav.map(({ label, icon: Icon }) => <button key={label} className={`mobile-tab-item ${active === label || (label === 'Recap' && active === 'League HQ') ? 'mobile-tab-active' : ''}`} aria-current={active === label || (label === 'Recap' && active === 'League HQ') ? 'page' : undefined} onClick={() => setActive(label === 'Recap' ? 'League HQ' : label)}>
+      <Icon size={20} strokeWidth={1.9} /><span>{label === 'Awards & records' ? 'Awards' : label}</span>
+    </button>)}
+  </nav>
 }
 
 function WeekPicker({ weeks, week, currentWeek, lastCompletedWeek, onChange }) {
@@ -195,12 +216,157 @@ function WeekPicker({ weeks, week, currentWeek, lastCompletedWeek, onChange }) {
   </div>
 }
 
-function Header({ onMenu, onGenerate, darkMode, onToggleDarkMode, isLive }) {
-  return <header className="topbar"><button className="icon-button mobile-menu" onClick={onMenu} aria-label="Open menu"><Menu size={20} /></button><div className="top-actions"><span className="demo-chip data-chip"><span className={isLive ? 'live-indicator' : ''} /> SLEEPER DATA</span><button className="theme-toggle" onClick={onToggleDarkMode} aria-label={`Switch to ${darkMode ? 'light' : 'dark'} mode`} aria-pressed={darkMode} title={`Switch to ${darkMode ? 'light' : 'dark'} mode`}>{darkMode ? <Sun size={17} /> : <Moon size={17} />}<span>{darkMode ? 'Light' : 'Dark'}</span></button><button className="generate-button" onClick={onGenerate} aria-label="Generate recap"><Sparkles size={15} /><span>Generate recap</span></button></div></header>
+function Header({ onMenu, darkMode, onToggleDarkMode, favoriteTeam, onFavoriteTeamChange }) {
+  return <header className="topbar"><button className="icon-button mobile-menu" onClick={onMenu} aria-label="Open menu"><Menu size={20} /></button><FavoriteTeamPicker favoriteTeam={favoriteTeam} onFavoriteTeamChange={onFavoriteTeamChange} compact /><div className="top-actions"><button className="theme-toggle" onClick={onToggleDarkMode} aria-label={`Switch to ${darkMode ? 'light' : 'dark'} mode`} aria-pressed={darkMode} title={`Switch to ${darkMode ? 'light' : 'dark'} mode`}>{darkMode ? <Sun size={17} /> : <Moon size={17} />}<span>{darkMode ? 'Light' : 'Dark'}</span></button></div></header>
 }
 
 function StatCard({ icon: Icon, label, value, note, noteTone, spark }) {
   return <article className="stat-card"><div className="stat-top"><span className="stat-icon"><Icon size={17} /></span><span className={`stat-note ${noteTone || ''}`}>{noteTone === 'positive' ? <ArrowUpRight size={13} /> : noteTone === 'negative' ? <ArrowDownRight size={13} /> : null}{note}</span></div><div className="stat-value">{value}</div><div className="stat-label">{label}</div>{spark && <svg className="sparkline" viewBox="0 0 120 32" preserveAspectRatio="none"><path d={spark} /></svg>}</article>
+}
+
+function cleanRecapDecimals(text) {
+  return text.replace(/\b-?\d+\.\d{3,}\b/g, (value) => Number(value).toFixed(2).replace(/\.?0+$/, ''))
+}
+
+function RecapSegments({ segments: sourceSegments }) {
+  const segments = []
+  sourceSegments.forEach((segment) => {
+    let text = cleanRecapDecimals(segment.text || '')
+    if (!text.trim()) return
+    const previous = segments[segments.length - 1]
+    const startsWithPunctuation = /^[,.;:!?)}\]”’]/.test(text.trimStart())
+    if (previous && startsWithPunctuation) {
+      previous.text = previous.text.trimEnd()
+      text = text.trimStart()
+    } else if (previous) {
+      const previousHasSpace = /\s$/.test(previous.text)
+      const currentHasSpace = /^\s/.test(text)
+      if (previousHasSpace && currentHasSpace) text = text.trimStart()
+      else if (!previousHasSpace && !currentHasSpace && !/[([{“‘]$/.test(previous.text)) text = ` ${text}`
+    }
+    segments.push({ ...segment, text })
+  })
+  return segments.map((segment, index) => {
+    if (segment.type === 'team') return <strong className="recap-team-emphasis" key={index}>{segment.text}</strong>
+    if (segment.type === 'player') return <strong className="recap-player-emphasis" key={index}>{segment.text}</strong>
+    if (segment.type === 'stat') return <span className="recap-stat-emphasis" key={index}>{segment.text}</span>
+    return <span key={index}>{segment.text}</span>
+  })
+}
+
+function RecapCopy({ recap }) {
+  if (!Array.isArray(recap.segments)) return <p>{cleanRecapDecimals(recap.text || '')}</p>
+  return <p><RecapSegments segments={recap.segments} /></p>
+}
+
+function hasRecapText(segments) {
+  return Array.isArray(segments) && segments.some((segment) => typeof segment.text === 'string' && segment.text.trim())
+}
+
+function isCompleteStructuredRecap(recap) {
+  return ['result', 'homeStory', 'awayStory', 'punchline'].every((key) => hasRecapText(recap[key])) && Array.isArray(recap.benchNote)
+}
+
+function isVerifiedBenchNote(segments, matchup) {
+  if (!hasRecapText(segments)) return false
+  const note = segments.map((segment) => segment.text).join(' ').toLocaleLowerCase()
+  return [matchup.home, matchup.away].some((team) => (team.eligibleBenchUpgrades || []).some(({ benchPlayer, starter }) =>
+    note.includes(benchPlayer.name.toLocaleLowerCase()) && note.includes(starter.name.toLocaleLowerCase())))
+}
+
+function RecapFallback({ matchup, isLive }) {
+  const [leader, trailer] = matchup.home.points >= matchup.away.points
+    ? [matchup.home, matchup.away]
+    : [matchup.away, matchup.home]
+  const teamNotes = [matchup.home, matchup.away].map((team) => {
+    const player = team.topStarter
+    return player
+      ? `${team.team.name} got ${formatPoints(player.points)} points from ${player.name}.`
+      : `${team.team.name} has no starter score to highlight yet.`
+  })
+  const benchNotes = [matchup.home, matchup.away].flatMap((team) => {
+    return (team.eligibleBenchUpgrades || []).slice(0, 1).map(({ benchPlayer, starter }) =>
+      `${team.team.manager} left ${formatPoints(benchPlayer.points)} points from ${benchPlayer.name} on the bench instead of ${starter.name}, who scored ${formatPoints(starter.points)}.`)
+  })
+  const margin = formatPoints(matchup.margin)
+  const result = matchup.home.points === matchup.away.points
+    ? `${matchup.home.team.name} and ${matchup.away.team.name} are tied at ${formatPoints(matchup.home.points)}.`
+    : `${leader.team.name} ${isLive ? 'currently leads' : 'beat'} ${trailer.team.name} by ${margin} points.`
+  return <div className="recap-fallback"><span>QUICK SCOREBOARD RECAP · AI RECAP INCOMPLETE</span><p>{result} {teamNotes.join(' ')} {benchNotes.join(' ')}</p></div>
+}
+
+function RecapMatchupPicker({ matchups, selectedIndex, week, onSelect }) {
+  const [open, setOpen] = useState(false)
+  const pickerRef = useRef(null)
+  const triggerRef = useRef(null)
+  const optionRefs = useRef([])
+  const selectedMatchup = matchups[selectedIndex] || matchups[0]
+
+  useEffect(() => {
+    if (!open) return undefined
+    const closeOnOutsideClick = (event) => {
+      if (!pickerRef.current?.contains(event.target)) setOpen(false)
+    }
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  useEffect(() => {
+    setOpen(false)
+    optionRefs.current = []
+  }, [matchups])
+
+  const focusOption = (index) => optionRefs.current[index]?.focus()
+  const openMenu = () => {
+    setOpen(true)
+    requestAnimationFrame(() => focusOption(selectedIndex))
+  }
+  const chooseMatchup = (index) => {
+    onSelect(index)
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+  const moveOptionFocus = (event, index) => {
+    let nextIndex = index
+    if (event.key === 'ArrowDown') nextIndex = (index + 1) % matchups.length
+    else if (event.key === 'ArrowUp') nextIndex = (index - 1 + matchups.length) % matchups.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = matchups.length - 1
+    else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      chooseMatchup(index)
+      return
+    } else return
+    event.preventDefault()
+    focusOption(nextIndex)
+  }
+
+  const renderTeamAvatar = (team, tone) => <Avatar initials={team.initials} src={team.avatar} fallbackSrc={team.avatarFallback} color={tone} small />
+  if (!selectedMatchup) return null
+
+  return <div className="recap-matchup-picker" ref={pickerRef}>
+    <span className="recap-picker-label" id="recap-matchup-label">WEEK {week} · SELECT MATCHUP</span>
+    <button type="button" className="recap-picker-trigger" ref={triggerRef} aria-haspopup="listbox" aria-controls="recap-matchup-listbox" aria-expanded={open} aria-label={`Choose recap matchup. Selected: ${selectedMatchup.home.team.name} versus ${selectedMatchup.away.team.name}`} onClick={() => open ? setOpen(false) : openMenu()} onKeyDown={(event) => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openMenu() } }}>
+      <span className="recap-picker-avatars">{renderTeamAvatar(selectedMatchup.home.team, '#dce9d3')}{renderTeamAvatar(selectedMatchup.away.team, '#eee2d6')}</span>
+      <span className="recap-picker-trigger-copy"><strong className="recap-picker-names"><span>{selectedMatchup.home.team.name}</span><i>vs</i><span>{selectedMatchup.away.team.name}</span></strong><small>{formatPoints(selectedMatchup.home.points)} <i>—</i> {formatPoints(selectedMatchup.away.points)} pts</small></span>
+      <ChevronDown size={17} className={`recap-picker-chevron ${open ? 'recap-picker-chevron-open' : ''}`} aria-hidden="true" />
+    </button>
+    {open && <div className="recap-matchup-menu" id="recap-matchup-listbox" role="listbox" aria-labelledby="recap-matchup-label">{matchups.map((matchup, index) => <div className={`recap-matchup-option ${index === selectedIndex ? 'recap-matchup-option-selected' : ''}`} key={`${matchup.home.rosterId}-${matchup.away.rosterId}`} role="option" aria-selected={index === selectedIndex} tabIndex={index === selectedIndex ? 0 : -1} ref={(element) => { optionRefs.current[index] = element }} onClick={() => chooseMatchup(index)} onKeyDown={(event) => moveOptionFocus(event, index)}>
+      <span className="recap-picker-avatars">{renderTeamAvatar(matchup.home.team, '#dce9d3')}{renderTeamAvatar(matchup.away.team, '#eee2d6')}</span>
+      <span className="recap-matchup-option-copy"><strong className="recap-picker-names"><span>{matchup.home.team.name}</span><i>vs</i><span>{matchup.away.team.name}</span></strong><small>{formatPoints(matchup.home.points)} <i>—</i> {formatPoints(matchup.away.points)} pts</small></span>
+      {index === selectedIndex && <span className="recap-matchup-check" aria-hidden="true">✓</span>}
+    </div>)}</div>}
+  </div>
 }
 
 function TrendChart({ darkMode, data, average }) {
@@ -217,15 +383,34 @@ function TrendChart({ darkMode, data, average }) {
   </AreaChart></ResponsiveContainer><div className="chart-average"><span className="average-line" /> Week avg <b>{formatPoints(average)}</b></div></div>
 }
 
-function MatchupCard({ matchup }) {
+function MatchupCard({ matchup, gameStatuses }) {
+  const [expanded, setExpanded] = useState(false)
   const homeWon = matchup.home.points > matchup.away.points
-  return <div className="matchup-row"><div className="matchup-status"><span className={`status-dot ${matchup.status === 'LIVE' ? 'yellow' : 'green'}`} />{matchup.status}</div><div className="matchup-teams"><div className={`matchup-team ${homeWon ? 'winner' : ''}`}><Avatar initials={matchup.home.team.initials} src={matchup.home.team.avatar} fallbackSrc={matchup.home.team.avatarFallback} color="#dce9d3" small /><span>{matchup.home.team.name}</span><b>{formatPoints(matchup.home.points)}</b></div><div className={`matchup-team ${!homeWon ? 'winner' : ''}`}><Avatar initials={matchup.away.team.initials} src={matchup.away.team.avatar} fallbackSrc={matchup.away.team.avatarFallback} color="#eee2d6" small /><span>{matchup.away.team.name}</span><b>{formatPoints(matchup.away.points)}</b></div></div><div className="matchup-margin">{formatPoints(matchup.margin)}<span>pt margin</span></div><ChevronRight size={16} className="muted-icon matchup-chevron" /></div>
+  return <div className={`matchup-card ${expanded ? 'matchup-expanded' : ''}`}>
+    <div className="matchup-row"><div className="matchup-status"><span className={`status-dot ${matchup.status === 'LIVE' ? 'yellow' : 'green'}`} />{matchup.status}</div><div className="matchup-teams"><div className={`matchup-team ${homeWon ? 'winner' : ''}`}><Avatar initials={matchup.home.team.initials} src={matchup.home.team.avatar} fallbackSrc={matchup.home.team.avatarFallback} color="#dce9d3" small /><span>{matchup.home.team.name}</span><b>{formatPoints(matchup.home.points)}</b></div><div className={`matchup-team ${!homeWon ? 'winner' : ''}`}><Avatar initials={matchup.away.team.initials} src={matchup.away.team.avatar} fallbackSrc={matchup.away.team.avatarFallback} color="#eee2d6" small /><span>{matchup.away.team.name}</span><b>{formatPoints(matchup.away.points)}</b></div></div><div className="matchup-margin">{formatPoints(matchup.margin)}<span>diff</span></div><button type="button" className="matchup-expand-button" aria-label={`${expanded ? 'Hide' : 'Show'} ${matchup.home.team.name} and ${matchup.away.team.name} lineups`} aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}><ChevronRight size={16} className="muted-icon matchup-chevron" /></button></div>
+    {expanded && <div className="matchup-lineups">{[matchup.home, matchup.away].map((team) => <section className="matchup-lineup" key={team.rosterId}><h4>{team.team.name} <span>{formatPoints(team.points)} pts</span></h4>{team.starters.map((player) => {
+      const gameState = gameStatuses && player.team ? gameStatuses[player.team] : null
+      const gameLabel = gameState === 'pre' ? 'Yet to play' : gameState === 'in' ? 'Playing' : gameState === 'post' ? 'Played' : gameStatuses && player.team ? 'Bye' : null
+      const teamTheme = teamThemeByCode[player.team]
+      return <div className="matchup-player" key={player.id}><span className="player-position">{player.position || 'Starter'}</span><span className="player-ident">{player.team && <small className="player-team" style={teamTheme ? { '--player-team-primary': teamTheme.primary, '--player-team-accent': teamTheme.accent } : undefined}>{player.team}</small>}<strong>{player.name}</strong></span>{gameLabel && <small className={`player-game-status ${gameState === 'pre' ? 'player-not-started' : ''}`}>{gameLabel}</small>}<b>{formatPoints(player.points)}</b></div>
+    })}</section>)}</div>}
+  </div>
 }
 
 function MatchupsPage({ leagueData, week, weekData, onWeekChange }) {
+  const [gameStatuses, setGameStatuses] = useState(null)
+  useEffect(() => {
+    const controller = new AbortController()
+    setGameStatuses(null)
+    fetchNflWeekStatuses(leagueData.league.season, week, controller.signal)
+      .then(setGameStatuses)
+      .catch((error) => { if (error.name !== 'AbortError') setGameStatuses(false) })
+    return () => controller.abort()
+  }, [leagueData.league.season, week])
+
   return <div className="page-content secondary-page">
     <div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line" /> {leagueData.league.season} SEASON</div><h1>Matchups <span className="wave">✦</span></h1><p className="welcome-subtitle">Every head-to-head result, score, and margin.</p></div><WeekPicker weeks={leagueData.weeks} week={week} currentWeek={leagueData.currentWeek} lastCompletedWeek={leagueData.lastCompletedWeek} onChange={onWeekChange} /></div>
-    <section className="panel matchup-page-panel"><div className="panel-heading matchup-heading"><div><div className="section-kicker">WEEK {week}{weekData.isLive ? ' · LIVE' : ' · FINAL'}</div><h3>League scoreboard</h3></div><span className="text-link">{weekData.matchups.length} matchups</span></div>{weekData.matchups.map((matchup) => <MatchupCard key={`${week}-${matchup.home.rosterId}`} matchup={{ ...matchup, status: weekData.isLive ? 'LIVE' : 'FINAL' }} />)}</section>
+    <section className="panel matchup-page-panel"><div className="panel-heading matchup-heading"><div><div className="section-kicker">WEEK {week}{weekData.isLive ? ' · LIVE' : ' · FINAL'}</div><h3>League scoreboard</h3></div><span className="text-link">{weekData.matchups.length} matchups</span></div>{weekData.matchups.map((matchup) => <MatchupCard key={`${week}-${matchup.home.rosterId}`} matchup={{ ...matchup, status: weekData.isLive ? 'LIVE' : 'FINAL' }} gameStatuses={gameStatuses || null} />)}</section>
     <footer className="page-footer"><span>{leagueData.league.name} <span className="footer-dot">·</span> Season {leagueData.league.season}</span><span>Live stats from Sleeper <span className="footer-heart">♥</span></span></footer>
   </div>
 }
@@ -428,7 +613,15 @@ function AwardsPage({ leagueData }) {
 function App() {
   const [active, setActive] = useState('League HQ')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [showRecap, setShowRecap] = useState(false)
+  const [confirmRegenerate, setConfirmRegenerate] = useState(null)
+  const confirmRegenerateButton = useRef(null)
+  const [savedRecap, setSavedRecap] = useState(null)
+  const [selectedRecapIndex, setSelectedRecapIndex] = useState(0)
+  const [bannerCopy, setBannerCopy] = useState(null)
+  const [loadingBannerCopy, setLoadingBannerCopy] = useState(false)
+  const [recapError, setRecapError] = useState('')
+  const [generatingRecap, setGeneratingRecap] = useState(false)
+  const [recapProgressStep, setRecapProgressStep] = useState(0)
   const [selectedWeek, setSelectedWeek] = useState(null)
   const [leagueData, setLeagueData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -481,20 +674,114 @@ function App() {
 
   const week = leagueData ? Math.min(selectedWeek || leagueData.currentWeek, leagueData.currentWeek) : null
   const weekData = week ? leagueData?.weeks?.[week] : null
+  const currentBannerCopy = bannerCopy?.key === (leagueData && week ? `sunday-club-banner-copy-${leagueData.league.id}-${leagueData.league.season}-${week}` : null) ? bannerCopy : null
   const awards = buildAwards(weekData)
-  const recapSummary = weekData?.highScore
-    ? `${weekData.highScore.team.name} led the week with ${formatPoints(weekData.highScore.points)} points.${weekData.closest ? ` ${weekData.closest.winner.team.name} edged ${weekData.closest.loser.team.name} by ${formatPoints(weekData.closest.margin)}.` : ''}${weekData.benchLeader?.benchPoints > 0 ? ` ${weekData.benchLeader.team.name} left ${formatPoints(weekData.benchLeader.benchPoints)} points on the bench.` : ''}`
-    : 'Matchup details will appear when Sleeper has scoring data for this week.'
-
+  const recapStorageKey = leagueData && week ? `sunday-club-recap-${leagueData.league.id}-${leagueData.league.season}-${week}` : null
+  useEffect(() => {
+    if (!generatingRecap) { setRecapProgressStep(0); return }
+    const timer = window.setInterval(() => setRecapProgressStep((step) => (step + 1) % 3), 2200)
+    return () => window.clearInterval(timer)
+  }, [generatingRecap])
+  const bannerCopyStorageKey = leagueData && week ? `sunday-club-banner-copy-${leagueData.league.id}-${leagueData.league.season}-${week}` : null
+  useEffect(() => {
+    if (!bannerCopyStorageKey || !weekData) return
+    let activeRequest = true
+    const loadOrGenerateCopy = async () => {
+      setBannerCopy(null)
+      let cachedCopy = null
+      try { cachedCopy = JSON.parse(localStorage.getItem(bannerCopyStorageKey) || 'null') } catch { cachedCopy = null }
+      if (cachedCopy?.headline && cachedCopy?.subtitle) {
+        setBannerCopy({ key: bannerCopyStorageKey, ...cachedCopy })
+        setLoadingBannerCopy(false)
+        return
+      }
+      if (!weekData.highScore) {
+        setLoadingBannerCopy(false)
+        return
+      }
+      setLoadingBannerCopy(true)
+      try {
+        const response = await fetch('/api/generate-week-copy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ season: leagueData.league.season, week, highScore: weekData.highScore, closest: weekData.closest }),
+        })
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Weekly copy generation failed.')
+        if (!activeRequest) return
+        const copy = body.copy
+        try { localStorage.setItem(bannerCopyStorageKey, JSON.stringify(copy)) } catch { /* Keep generated copy available for this session if storage is unavailable. */ }
+        setBannerCopy({ key: bannerCopyStorageKey, ...copy })
+      } catch {
+        if (!activeRequest) return
+        const fallback = {
+          headline: weekData.closest ? 'Big scores. Close finishes.' : `${weekData.highScore.team.name} sets the pace.`,
+          subtitle: `${formatPoints(weekData.highScore.points)} points led the week${weekData.closest ? `; the closest matchup came down to ${weekData.closest.margin.toFixed(1)}` : ''}.`,
+        }
+        setBannerCopy({ key: bannerCopyStorageKey, ...fallback })
+      } finally {
+        if (activeRequest) setLoadingBannerCopy(false)
+      }
+    }
+    loadOrGenerateCopy()
+    return () => { activeRequest = false }
+  }, [bannerCopyStorageKey, weekData, leagueData?.league?.season, week])
+  useEffect(() => {
+    if (!recapStorageKey) return
+    setSelectedRecapIndex(0)
+    try { setSavedRecap(JSON.parse(localStorage.getItem(recapStorageKey) || 'null')) } catch { setSavedRecap(null) }
+    setRecapError('')
+  }, [recapStorageKey])
+  useEffect(() => {
+    if (!confirmRegenerate) return
+    confirmRegenerateButton.current?.focus()
+    const closeOnEscape = (event) => { if (event.key === 'Escape') setConfirmRegenerate(null) }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [confirmRegenerate])
+  const generateRecap = async ({ targetIndex = null, confirmed = false } = {}) => {
+    if (generatingRecap || !weekData?.matchups?.length) return
+    if (savedRecap && !confirmed) { setConfirmRegenerate({ targetIndex }); return }
+    setConfirmRegenerate(null)
+    setGeneratingRecap(true)
+    setRecapError('')
+    try {
+      const allMatchups = weekData.matchups.map(({ home, away, margin }) => ({
+        home: { name: home.team.name, manager: home.team.manager, score: home.points, starters: [...home.starters].sort((a, b) => b.points - a.points).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), bench: (home.benchPlayers || []).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), eligibleBenchUpgrades: home.eligibleBenchUpgrades || [] },
+        away: { name: away.team.name, manager: away.team.manager, score: away.points, starters: [...away.starters].sort((a, b) => b.points - a.points).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), bench: (away.benchPlayers || []).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), eligibleBenchUpgrades: away.eligibleBenchUpgrades || [] },
+        margin,
+      }))
+      const matchups = targetIndex === null ? allMatchups : [allMatchups[targetIndex]]
+      const response = await fetch('/api/generate-recap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ season: leagueData.league.season, week, matchups }) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Recap generation failed.')
+      const recaps = targetIndex === null
+        ? body.recaps
+        : (savedRecap?.recaps || []).map((recap, index) => index === targetIndex ? body.recaps[0] : recap)
+      const result = { generatedAt: new Date().toISOString(), recaps }
+      setSavedRecap(result)
+      if (recapStorageKey) localStorage.setItem(recapStorageKey, JSON.stringify(result))
+      if (!savedRecap) document.getElementById('weekly-recap')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } catch (error) {
+      setRecapError(error.message || 'Recap generation failed. Check your connection and try again.')
+    } finally { setGeneratingRecap(false) }
+  }
   return <div className="app-shell" data-theme={darkMode ? 'dark' : 'light'} style={{ '--team-primary': favoriteTeam.primary, '--team-accent': favoriteTeam.accent }}>
-    <Sidebar active={active} setActive={setActive} open={menuOpen} onClose={() => setMenuOpen(false)} favoriteTeam={favoriteTeam} onFavoriteTeamChange={changeFavoriteTeam} league={leagueData?.league} />
+    <Sidebar active={active} setActive={setActive} open={menuOpen} onClose={() => setMenuOpen(false)} favoriteTeam={favoriteTeam} onFavoriteTeamChange={changeFavoriteTeam} league={leagueData?.league} darkMode={darkMode} onToggleDarkMode={toggleDarkMode} />
     <main className="main-area">
-      <Header onMenu={() => setMenuOpen(true)} onGenerate={() => setShowRecap(true)} darkMode={darkMode} onToggleDarkMode={toggleDarkMode} isLive={weekData?.isLive} />
+      <Header onMenu={() => setMenuOpen(true)} darkMode={darkMode} onToggleDarkMode={toggleDarkMode} favoriteTeam={favoriteTeam} onFavoriteTeamChange={changeFavoriteTeam} />
       {loading && !leagueData && <div className="api-state"><LoaderCircle size={22} className="loading-spinner" /><strong>Loading your Sleeper league…</strong><span>Pulling standings and matchup data.</span></div>}
       {loadError && !leagueData && <div className="api-state api-error"><strong>Couldn’t load this league</strong><span>{loadError}</span><button className="generate-button" onClick={() => setRefreshAttempt((value) => value + 1)}><RefreshCw size={15} /> Try again</button></div>}
       {leagueData && weekData && (active === 'Awards & records' ? <AwardsPage leagueData={leagueData} /> : active === 'Matchups' ? <MatchupsPage leagueData={leagueData} week={week} weekData={weekData} onWeekChange={setSelectedWeek} /> : active === 'Standings' ? <StandingsPage leagueData={leagueData} /> : <div className="page-content">
         <div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line" /> {leagueData.league.season} SEASON <span className="eyebrow-sun">✳</span> WEEK {week}</div><h1>Week {week}, in focus <span className="wave">✦</span></h1><p className="welcome-subtitle">{weekData.isLive ? 'Live scores are rolling in across the league.' : 'The league has entered its “every point matters” era.'}</p></div><WeekPicker weeks={leagueData.weeks} week={week} currentWeek={leagueData.currentWeek} lastCompletedWeek={leagueData.lastCompletedWeek} onChange={setSelectedWeek} /></div>
-        <section className="featured-banner"><div className="banner-grain" /><div className="banner-content"><div className="live-label"><span /> WEEK {week} {weekData.isLive ? 'LIVE' : 'RECAP'} <span className="label-separator">/</span> {weekData.isLive ? 'IN PROGRESS' : 'FINAL'}</div><h2>{weekData.highScore?.team.name || 'League scoreboard'}<br />made a <em>statement.</em></h2><p>{weekData.highScore ? `${formatPoints(weekData.highScore.points)} points led the week${weekData.closest ? `; ${weekData.closest.margin.toFixed(1)} points separated the closest matchup` : ''}.` : 'Matchup scores are not available for this week yet.'}</p><button className="banner-button" onClick={() => setShowRecap(true)}>Read this week’s recap <ArrowRight size={15} /></button></div><div className="banner-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="banner-ball">🏈</div><div className="art-star star-one">✳</div><div className="art-star star-two">✦</div><div className="art-score"><span>WEEK HIGH</span><strong>{weekData.highScore ? formatPoints(weekData.highScore.points) : '—'}</strong><small>PTS</small></div><div className="banner-sticker">{weekData.isLive ? 'LIVE\nSCORES' : 'WEEK\nWINNER'}</div></div><div className="banner-index">{String(week).padStart(2, '0')} <span>—</span> {String(leagueData.currentWeek).padStart(2, '0')}</div></section>
+        <section className="featured-banner"><div className="banner-grain" /><div className="banner-content"><div className="live-label"><span /> WEEK {week} {weekData.isLive ? 'LIVE' : 'RECAP'} <span className="label-separator">/</span> {weekData.isLive ? 'IN PROGRESS' : 'FINAL'}</div><h2>{currentBannerCopy?.headline || (loadingBannerCopy ? 'Writing this week’s headline…' : 'The week is taking shape.')}</h2><p aria-live="polite">{currentBannerCopy?.subtitle || (loadingBannerCopy ? 'Pulling together the biggest score and closest finish.' : 'Matchup scores are not available for this week yet.')}</p><button className="banner-button" onClick={() => document.getElementById('weekly-recap')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Read this week’s recap <ArrowRight size={15} /></button></div><div className="banner-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="banner-ball">🏈</div><div className="art-star star-one">✳</div><div className="art-star star-two">✦</div><div className="art-score"><span>WEEK HIGH</span><strong>{weekData.highScore ? formatPoints(weekData.highScore.points) : '—'}</strong><small>PTS</small></div><div className="banner-sticker">{weekData.isLive ? 'LIVE\nSCORES' : 'WEEK\nWINNER'}</div></div><div className="banner-index">{String(week).padStart(2, '0')} <span>—</span> {String(leagueData.currentWeek).padStart(2, '0')}</div></section>
+
+        <section className="weekly-recap panel" id="weekly-recap">
+          <div className="panel-heading"><div><div className="section-kicker">THE SUNDAY EDITION</div><h3>Week {week} matchup recaps</h3></div>{savedRecap && <span className="saved-tag">SAVED</span>}</div>
+          {weekData.matchups.length > 0 && <RecapMatchupPicker matchups={weekData.matchups} selectedIndex={selectedRecapIndex} week={week} onSelect={setSelectedRecapIndex} />}
+          {recapError && <p className="recap-error" role="alert">{recapError}</p>}
+          {savedRecap?.recaps?.length ? <div className="recap-list">{savedRecap.recaps.map((recap, index) => { if (index !== selectedRecapIndex) return null; const matchup = weekData.matchups[index]; if (!matchup) return null; const hasLegacyCopy = hasRecapText(recap.segments) || (typeof recap.text === 'string' && recap.text.trim()); return <article className="recap-card" key={`${matchup.home.team.name}-${matchup.away.team.name}-${index}`}><div className="recap-card-heading"><strong>{matchup.home.team.name}</strong><span>{formatPoints(matchup.home.points)} <i>—</i> {formatPoints(matchup.away.points)}</span><strong>{matchup.away.team.name}</strong></div>{isCompleteStructuredRecap(recap) ? <><div className="recap-result"><RecapSegments segments={recap.result} /></div><div className="recap-team-stories"><section className="recap-team-story"><h4>{matchup.home.team.name}<span>{formatPoints(matchup.home.points)}</span></h4><p><RecapSegments segments={recap.homeStory} /></p></section><section className="recap-team-story"><h4>{matchup.away.team.name}<span>{formatPoints(matchup.away.points)}</span></h4><p><RecapSegments segments={recap.awayStory} /></p></section></div>{isVerifiedBenchNote(recap.benchNote, matchup) && <aside className="recap-bench-note"><span>BENCH REGRET</span><p><RecapSegments segments={recap.benchNote} /></p></aside>}<p className="recap-punchline"><Sparkles size={13} /><span className="recap-punchline-text"><RecapSegments segments={recap.punchline} /></span></p></> : hasLegacyCopy ? <RecapCopy recap={recap} /> : <RecapFallback matchup={matchup} isLive={weekData.isLive} />}<button className="recap-retry-button" onClick={() => generateRecap({ targetIndex: index })} disabled={generatingRecap} aria-label={`Regenerate recap for ${matchup.home.team.name} vs ${matchup.away.team.name}`}><RefreshCw size={13} /><span>{generatingRecap ? 'Generating…' : 'Regenerate'}</span></button></article> })}</div> : <div className={`recap-empty ${generatingRecap ? 'recap-empty-generating' : ''}`} aria-live="polite" aria-busy={generatingRecap}><div className="recap-empty-icon">{generatingRecap ? <LoaderCircle size={22} className="loading-spinner" /> : <Sparkles size={19} />}</div><p key={generatingRecap ? `progress-${recapProgressStep}` : 'idle'}>{weekData.matchups.length ? (generatingRecap ? ['Reading the box scores…', 'Finding the week’s biggest moments…', 'Writing the matchup stories…'][recapProgressStep] : 'Generate a witty, stats-rich recap for every matchup this week.') : 'Recaps will be available when matchups have scoring data.'}</p>{generatingRecap && <div className="recap-progress-track" aria-hidden="true"><span /></div>}<button className="generate-button" onClick={() => generateRecap()} disabled={generatingRecap || !weekData.matchups.length}><Sparkles size={14} />{generatingRecap ? 'Generating…' : 'Generate recap'}</button></div>}
+        </section>
 
         <section className="stats-grid" aria-label="League highlights"><StatCard icon={Trophy} label="Weekly high score" value={weekData.highScore ? formatPoints(weekData.highScore.points) : '—'} note={weekData.highScore?.team.name || 'No scores yet'} /><StatCard icon={Flame} label="Closest matchup" value={weekData.closest ? `${formatPoints(weekData.closest.margin)} pts` : '—'} note={weekData.closest?.winner.team.name || 'No matchup yet'} /><StatCard icon={Gauge} label="League average" value={formatPoints(weekData.average)} note={`${leagueData.league.teamCount} teams this week`} /><StatCard icon={Shield} label="Highest scoring player" value={weekData.highestScoringPlayer ? `${formatPoints(weekData.highestScoringPlayer.points)} pts` : '—'} note={weekData.highestScoringPlayer ? `${weekData.highestScoringPlayer.name} · ${weekData.highestScoringPlayer.team.name}` : 'No player scores yet'} /></section>
 
@@ -506,10 +793,11 @@ function App() {
             <section className="panel awards-panel"><div className="panel-heading"><div><div className="section-kicker">THE HARDWARE</div><h3>Week {week} awards <span className="award-count">{String(awards.length).padStart(2, '0')}</span></h3></div></div><div className="award-list">{awards.slice(0, 4).map((award, index) => <AwardCard award={award} featured={index === 0} key={award.title} />)}</div><button className="standings-link" onClick={() => setActive('Awards & records')}>All awards &amp; records <ArrowRight size={14} /></button><div className="awards-foot"><Sparkles size={14} /><span>Calculated from Sleeper matchup scores.</span></div></section>
           </div>
         </div>
-        <footer className="page-footer"><span>{leagueData.league.name} <span className="footer-dot">·</span> Season {leagueData.league.season}</span><span>Live stats from Sleeper <span className="footer-heart">♥</span></span><button aria-label="Help"><CircleHelp size={15} /></button></footer>
+        <footer className="page-footer"><span>{leagueData.league.name} <span className="footer-dot">·</span> Season {leagueData.league.season}</span><span>Live stats from Sleeper <span className="footer-heart">♥</span></span></footer>
       </div>)}
     </main>
-    {showRecap && weekData && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowRecap(false) }}><div className="recap-modal"><button className="modal-close" onClick={() => setShowRecap(false)} aria-label="Close recap"><X size={18} /></button><div className="modal-kicker"><Sparkles size={14} /> WEEK {week} · THE SUNDAY EDITION</div><h2>{weekData.isLive ? 'The week is still' : 'The week has'}<br /><em>finding its plot.</em></h2><p>{recapSummary}</p>{awards[0] && <div className="modal-award"><span>{awards[0].icon}</span><div><b>{awards[0].title}</b><small>{awards[0].winner} · {awards[0].detail}</small></div><span className="saved-tag">LIVE STATS</span></div>}<div className="modal-actions"><button className="secondary-button" onClick={() => setShowRecap(false)}>Back to dashboard</button><button className="generate-button" onClick={() => setShowRecap(false)}><Sparkles size={14} /> Close recap</button></div><div className="modal-footnote">Built from live Sleeper scores. Saved AI writeups are not connected yet.</div></div></div>}
+    <MobileTabBar active={active} setActive={setActive} />
+    {confirmRegenerate && <div className="modal-backdrop confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmRegenerate(null) }}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-regenerate-title" aria-describedby="confirm-regenerate-copy"><div className="confirm-icon"><Sparkles size={19} /></div><div className="modal-kicker">WEEK {week} · THE SUNDAY EDITION</div><h2 id="confirm-regenerate-title">{confirmRegenerate.targetIndex === null ? <>Give this recap<br /><em>a fresh take?</em></> : <>Rewrite this matchup<br /><em>recap?</em></>}</h2><p id="confirm-regenerate-copy">{confirmRegenerate.targetIndex === null ? `Your saved Week ${week} recaps will all be replaced.` : `The recap for ${weekData.matchups[confirmRegenerate.targetIndex]?.home.team.name} vs ${weekData.matchups[confirmRegenerate.targetIndex]?.away.team.name} will be replaced. Your other recaps will stay as they are.`}</p><div className="confirm-actions"><button className="secondary-button" onClick={() => setConfirmRegenerate(null)}>Keep current recap</button><button ref={confirmRegenerateButton} className="generate-button" onClick={() => generateRecap({ targetIndex: confirmRegenerate.targetIndex, confirmed: true })}><Sparkles size={14} /> Regenerate {confirmRegenerate.targetIndex === null ? 'all' : 'recap'}</button></div></section></div>}
   </div>
 }
 

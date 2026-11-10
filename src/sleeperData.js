@@ -1,7 +1,64 @@
-import playerMap from './playerMap.json' with { type: 'json' }
-
 export const LEAGUE_ID = '1389752419247747072'
 const API_ROOT = 'https://api.sleeper.app/v1'
+const PLAYER_CACHE_DB = 'sleeper-league-stats-cache'
+const PLAYER_CACHE_STORE = 'api-data'
+const PLAYER_CACHE_KEY = 'nfl-players'
+const PLAYER_CACHE_TTL = 24 * 60 * 60 * 1000
+
+function openPlayerCache() {
+  return new Promise((resolve, reject) => {
+    if (!globalThis.indexedDB) return reject(new Error('IndexedDB is unavailable'))
+    const request = indexedDB.open(PLAYER_CACHE_DB, 1)
+    request.onupgradeneeded = () => request.result.createObjectStore(PLAYER_CACHE_STORE)
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+async function readPlayerCache() {
+  const db = await openPlayerCache()
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(PLAYER_CACHE_STORE, 'readonly').objectStore(PLAYER_CACHE_STORE).get(PLAYER_CACHE_KEY)
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => reject(request.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function writePlayerCache(record) {
+  const db = await openPlayerCache()
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(PLAYER_CACHE_STORE, 'readwrite')
+      transaction.objectStore(PLAYER_CACHE_STORE).put(record, PLAYER_CACHE_KEY)
+      transaction.oncomplete = resolve
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function getPlayerDirectory(signal) {
+  const cached = await readPlayerCache().catch(() => null)
+  if (cached && Date.now() - cached.fetchedAt < PLAYER_CACHE_TTL) return cached.players
+  try {
+    const response = await fetch(`${API_ROOT}/players/nfl`, { signal })
+    if (!response.ok) throw new Error(`Sleeper returned ${response.status} for /players/nfl`)
+    const players = await response.json()
+    if (players && typeof players === 'object') {
+      await writePlayerCache({ players, fetchedAt: Date.now() }).catch(() => {})
+      return players
+    }
+    throw new Error('Sleeper returned an invalid NFL player directory')
+  } catch {
+    return cached?.players || {}
+  }
+}
 
 async function getJson(path, signal) {
   const response = await fetch(`${API_ROOT}${path}`, { signal })
@@ -13,8 +70,9 @@ function points(total, decimal = 0) {
   return Number(total || 0) + Number(decimal || 0) / 100
 }
 
-function playerName(id) {
-  if (playerMap[id]?.name) return playerMap[id].name
+function playerName(id, players) {
+  if (players[id]?.full_name) return players[id].full_name
+  if (players[id]?.first_name || players[id]?.last_name) return [players[id].first_name, players[id].last_name].filter(Boolean).join(' ')
   if (/^[A-Z]{2,4}$/.test(id)) return `${id} D/ST`
   return `Player ${id}`
 }
@@ -37,31 +95,67 @@ function makeTeam(roster, user) {
   }
 }
 
-function pointsLeftOnBench(row, team, week, currentWeek) {
-  if (!row.players_points) return { total: 0, topPlayer: null }
+function pointsLeftOnBench(row, team, week, currentWeek, players) {
+  if (!row.players_points) return { total: 0, topPlayer: null, players: [] }
   const starters = new Set(row.starters || [])
   const reserve = new Set(week === currentWeek ? team.reserve || [] : [])
   const bench = Object.entries(row.players_points)
     .filter(([id]) => !starters.has(id) && !reserve.has(id))
-    .map(([id, score]) => ({ id, name: playerName(id), points: Number(score) || 0 }))
+    .map(([id, score]) => ({
+      id,
+      name: playerName(id, players),
+      position: players[id]?.fantasy_positions?.[0] || players[id]?.position || (/^[A-Z]{2,4}$/.test(id) ? 'DEF' : ''),
+      points: Number(score) || 0,
+    }))
     .filter((player) => player.points > 0)
     .sort((a, b) => b.points - a.points)
   return {
     total: bench.reduce((total, player) => total + player.points, 0),
     topPlayer: bench[0] || null,
+    players: bench,
   }
 }
 
-function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek) {
+function slotCanAcceptPlayer(position, slot) {
+  if (!position || !slot) return false
+  if (position === slot) return true
+  if (slot === 'FLEX') return ['RB', 'WR', 'TE'].includes(position)
+  if (slot === 'REC_FLEX') return ['WR', 'TE'].includes(position)
+  if (slot === 'SUPER_FLEX') return ['QB', 'RB', 'WR', 'TE'].includes(position)
+  if (slot === 'IDP_FLEX') return ['DL', 'LB', 'DB', 'IDP'].includes(position)
+  return false
+}
+
+function findBenchUpgrades(benchPlayers, starters, rosterPositions = []) {
+  const starterSlots = rosterPositions.filter((slot) => !['BN', 'IR', 'TAXI'].includes(slot))
+  return benchPlayers.map((benchPlayer) => {
+    const eligibleStarter = starters
+      .map((starter, index) => ({ starter, slot: starterSlots[index] || starter.position }))
+      .filter(({ starter, slot }) => starter.id && !starter.name.startsWith('Player ') && slotCanAcceptPlayer(benchPlayer.position, slot))
+      .filter(({ starter }) => benchPlayer.points > starter.points)
+      .sort((left, right) => left.starter.points - right.starter.points)[0]
+    if (!eligibleStarter) return null
+    return {
+      benchPlayer: { name: benchPlayer.name, position: benchPlayer.position, points: benchPlayer.points },
+      starter: { name: eligibleStarter.starter.name, position: eligibleStarter.starter.position, points: eligibleStarter.starter.points },
+      slot: eligibleStarter.slot,
+      pointDifference: benchPlayer.points - eligibleStarter.starter.points,
+    }
+  }).filter(Boolean).sort((left, right) => right.pointDifference - left.pointDifference).slice(0, 3)
+}
+
+function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek, players) {
   const rosterRows = rows.map((row) => {
     const team = teamsById.get(Number(row.roster_id))
-    const bench = pointsLeftOnBench(row, team || {}, week, currentWeek)
+    const bench = pointsLeftOnBench(row, team || {}, week, currentWeek, players)
     const starters = (row.starters || []).map((id, index) => ({
       id,
-      name: playerName(id),
+      name: playerName(id, players),
       points: Number(row.starters_points?.[index] ?? row.players_points?.[id]) || 0,
-      position: playerMap[id]?.position || (/^[A-Z]{2,4}$/.test(id) ? 'DEF' : ''),
+      position: players[id]?.fantasy_positions?.[0] || players[id]?.position || (/^[A-Z]{2,4}$/.test(id) ? 'DEF' : ''),
+      team: players[id]?.team || (/^[A-Z]{2,4}$/.test(id) ? id : null),
     }))
+    const eligibleBenchUpgrades = findBenchUpgrades(bench.players, starters, team?.rosterPositions || [])
     const flexIndex = team?.rosterPositions?.indexOf('FLEX') ?? -1
     return {
       rosterId: Number(row.roster_id),
@@ -71,11 +165,13 @@ function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek) {
       playersPoints: row.players_points || {},
       rosteredPlayers: Object.entries(row.players_points || {}).map(([id, score]) => ({
         id,
-        name: playerName(id),
+        name: playerName(id, players),
         points: Number(score) || 0,
       })),
       benchPoints: bench.total,
       topBenchPlayer: bench.topPlayer,
+      benchPlayers: bench.players,
+      eligibleBenchUpgrades,
       starters,
       topStarter: [...starters].sort((a, b) => b.points - a.points)[0] || null,
       startersOverTwenty: starters.filter((player) => player.points >= 20).length,
@@ -147,11 +243,12 @@ function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek) {
 }
 
 export async function fetchLeagueDashboard(signal) {
-  const [league, users, rosters, nflState] = await Promise.all([
+  const [league, users, rosters, nflState, players] = await Promise.all([
     getJson(`/league/${LEAGUE_ID}`, signal),
     getJson(`/league/${LEAGUE_ID}/users`, signal),
     getJson(`/league/${LEAGUE_ID}/rosters`, signal),
     getJson('/state/nfl', signal),
+    getPlayerDirectory(signal),
   ])
 
   const currentWeek = Math.max(1, Number(nflState.display_week || nflState.week || league.settings?.leg || 1))
@@ -163,7 +260,7 @@ export async function fetchLeagueDashboard(signal) {
   const weeks = await Promise.all(Array.from({ length: currentWeek }, async (_, index) => {
     const week = index + 1
     const rows = await getJson(`/league/${LEAGUE_ID}/matchups/${week}`, signal)
-    return [week, makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek)]
+    return [week, makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek, players)]
   }))
 
   const standings = teams.map((team) => ({
@@ -187,5 +284,21 @@ export async function fetchLeagueDashboard(signal) {
 
 export function formatPoints(value) {
   return (Number(value) || 0).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+}
+
+export async function fetchNflWeekStatuses(season, week, signal) {
+  const seasonType = Number(week) > 18 ? 3 : 2
+  const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&week=${week}&seasontype=${seasonType}`, { signal })
+  if (!response.ok) throw new Error(`NFL schedule returned ${response.status}`)
+  const scoreboard = await response.json()
+  const statuses = {}
+  for (const event of scoreboard.events || []) {
+    const status = event.status?.type?.state
+    for (const competitor of event.competitions?.[0]?.competitors || []) {
+      const team = competitor.team?.abbreviation
+      if (team && status) statuses[team] = status
+    }
+  }
+  return statuses
 }
 
