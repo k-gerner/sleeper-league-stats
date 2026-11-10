@@ -847,3 +847,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .decorated-total { font-size: 16px; }
   .member-award-breakdown { grid-template-columns: 1fr; margin-left: 8px; }
 }
+.award-card { width: 100%; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.awards-panel .standings-link { height: 38px; margin-top: 9px; border: 1px solid #dfe6d8; border-radius: 7px; background: #f7f9f4; font-weight: 600; transition: background .15s, border-color .15s, color .15s; }
+.awards-panel .standings-link:hover { border-color: #c9d6bf; background: #edf3e8; color: #354a31; }
+.awards-panel .standings-link:focus-visible { outline: 2px solid #78965e; outline-offset: 2px; }
+[data-theme="dark"] .awards-panel .standings-link { border-color: #394736; background: #252e24; }
+[data-theme="dark"] .awards-panel .standings-link:hover { border-color: #52684b; background: #2c3929; }

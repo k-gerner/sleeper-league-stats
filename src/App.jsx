@@ -456,8 +456,8 @@ function StandingsPage({ leagueData }) {
   </div>
 }
 
-function AwardCard({ award, featured = false }) {
-  return <div className={`award-card ${award.color} ${featured ? 'award-featured' : ''}`}><div className="award-emoji">{award.icon}</div><div className="award-copy"><span className="award-title">{award.title}</span><strong>{award.winner}</strong><span className="award-detail">{award.detail}</span></div><ArrowRight size={15} className="award-arrow" /></div>
+function AwardCard({ award, featured = false, onClick }) {
+  return <button type="button" className={`award-card ${award.color} ${featured ? 'award-featured' : ''}`} onClick={() => onClick(award.key)} aria-label={`View ${award.title} in Awards and records`}><div className="award-emoji">{award.icon}</div><div className="award-copy"><span className="award-title">{award.title}</span><strong>{award.winner}</strong><span className="award-detail">{award.detail}</span></div><ArrowRight size={15} className="award-arrow" /></button>
 }
 
 function buildAwards(weekData) {
@@ -529,8 +529,11 @@ function buildAwardArchive(leagueData) {
   const weeklyHistory = Object.entries(leagueData.weeks)
     .map(([weekNumber, weekData]) => ({ week: Number(weekNumber), weekData, awards: buildAwards(weekData) }))
     .sort((a, b) => b.week - a.week)
+  const etWeekday = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date())
+  const currentWeekAwardsFinal = ['Tue', 'Wed', 'Thu', 'Fri', 'Sat'].includes(etWeekday)
+  const countedWeeks = weeklyHistory.filter(({ week }) => week < leagueData.currentWeek || (week === leagueData.currentWeek && currentWeekAwardsFinal))
 
-  for (const week of weeklyHistory) {
+  for (const week of countedWeeks) {
     for (const award of week.awards) {
       const recipients = new Set(award.teamIds.map((teamId) => String(teamsById.get(teamId)?.managerId || teamId)))
       for (const personId of recipients) {
@@ -565,9 +568,10 @@ function buildAwardArchive(leagueData) {
 
   return {
     weeks: weeklyHistory,
+    completedWeeks: countedWeeks,
     tallies,
     leaders,
-    totalAwards: weeklyHistory.reduce((total, week) => total + week.awards.length, 0),
+    totalAwards: countedWeeks.reduce((total, week) => total + week.awards.length, 0),
   }
 }
 
@@ -578,10 +582,19 @@ function AwardHistoryItem({ award }) {
   </article>
 }
 
-function AwardsPage({ leagueData }) {
+function AwardsPage({ leagueData, focusAwardKey, onFocusAwardHandled }) {
   const archive = buildAwardArchive(leagueData)
-  const seasonWeeks = archive.weeks
+  const seasonWeeks = archive.completedWeeks
   const [showAllLeaders, setShowAllLeaders] = useState(false)
+  useEffect(() => {
+    if (!focusAwardKey) return
+    const target = document.getElementById(`award-tally-${focusAwardKey}`)
+    if (target) {
+      target.open = true
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+    onFocusAwardHandled()
+  }, [focusAwardKey, onFocusAwardHandled])
   const decoratedLeaders = archive.leaders.filter((person) => person.total > 0)
   const records = [
     { icon: '🏆', title: 'Highest team score', result: seasonWeeks.map(({ week, weekData }) => ({ week, team: weekData.highScore, value: weekData.highScore?.points })).filter((item) => item.team).sort((a, b) => b.value - a.value)[0], format: (record) => `${formatPoints(record.value)} pts` },
@@ -603,7 +616,7 @@ function AwardsPage({ leagueData }) {
       return <article className="season-record-card" key={record.title}><span className="record-card-icon">{record.icon}</span><span className="record-card-title">{record.title}</span><strong>{record.format(record.result)}</strong><span className="record-card-holder">{who}</span><small>Week {record.result.week}</small></article>
     })}</div></section>
 
-    <section className="award-tallies-section"><div className="award-section-heading"><div><div className="section-kicker">EVERY CATEGORY, EVERY RECIPIENT</div><h2>Award tallies</h2></div><p>Open an award to see each recipient’s wins and the details for each week.</p></div><div className="award-tally-grid">{archive.tallies.filter((award) => award.total > 0).map((award) => <details className="award-tally-card" key={award.key}><summary><span className="tally-award-emoji">{award.icon}</span><span className="tally-award-main"><strong>{award.title}</strong><small>{award.description}</small></span><ChevronDown size={16} className="tally-chevron" /></summary><div className="tally-recipients">{award.people.filter((person) => person.count > 0).map((person, index) => <div className="tally-recipient" key={person.id}><span className="tally-recipient-rank">{String(index + 1).padStart(2, '0')}</span><div className="tally-recipient-info"><strong>{person.teams.join(', ')}</strong><small>{person.name}</small><ul className="tally-recipient-events">{person.events.map((event, eventIndex) => <li key={`${event.week}-${eventIndex}`}><b>Week {event.week}:</b> {event.recipientDetails?.length ? `${event.recipientDetails.map(({ result }) => `(${result})`).join(', ')} · ` : ''}{event.detail}</li>)}</ul></div><b>{person.count}</b></div>)}</div></details>)}</div></section>
+    <section className="award-tallies-section"><div className="award-section-heading"><div><div className="section-kicker">EVERY CATEGORY, EVERY RECIPIENT</div><h2>Award tallies</h2></div><p>Open an award to see each recipient’s wins and the details for each week.</p></div><div className="award-tally-grid">{archive.tallies.filter((award) => award.total > 0).map((award) => <details className="award-tally-card" id={`award-tally-${award.key}`} key={award.key}><summary><span className="tally-award-emoji">{award.icon}</span><span className="tally-award-main"><strong>{award.title}</strong><small>{award.description}</small></span><ChevronDown size={16} className="tally-chevron" /></summary><div className="tally-recipients">{award.people.filter((person) => person.count > 0).map((person, index) => <div className="tally-recipient" key={person.id}><span className="tally-recipient-rank">{String(index + 1).padStart(2, '0')}</span><div className="tally-recipient-info"><strong>{person.teams.join(', ')}</strong><small>{person.name}</small><ul className="tally-recipient-events">{person.events.map((event, eventIndex) => <li key={`${event.week}-${eventIndex}`}><b>Week {event.week}:</b> {event.recipientDetails?.length ? `${event.recipientDetails.map(({ result }) => `(${result})`).join(', ')} · ` : ''}{event.detail}</li>)}</ul></div><b>{person.count}</b></div>)}</div></details>)}</div></section>
 
     <section className="week-history-section"><div className="award-section-heading"><div><div className="section-kicker">THE WEEKLY HARDWARE</div><h2>Current &amp; past awards</h2></div><p>Live-week awards may change as Sleeper updates scores.</p></div><div className="week-history-list">{archive.weeks.map(({ week, weekData, awards }) => <details className="week-history-card" open={week === leagueData.currentWeek} key={week}><summary><span className="week-history-number">WEEK {String(week).padStart(2, '0')}</span><span className={`week-history-status ${weekData.isLive ? 'history-status-live' : ''}`}>{weekData.isLive ? 'LIVE' : 'FINAL'}</span><span className="week-history-count">{awards.length} awards</span><ChevronDown size={17} className="week-history-chevron" /></summary><div className="week-history-awards">{awards.map((award) => <AwardHistoryItem key={`${week}-${award.key}`} award={award} />)}{awards.length === 0 && <div className="week-no-awards">No matchup awards available for this week yet.</div>}</div></details>)}</div></section>
     <p className="award-method-note">Awards are calculated from Sleeper matchup and player scores. Current-week totals are provisional until scoring is final.</p>
@@ -612,6 +625,7 @@ function AwardsPage({ leagueData }) {
 
 function App() {
   const [active, setActive] = useState('League HQ')
+  const [focusAwardKey, setFocusAwardKey] = useState(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmRegenerate, setConfirmRegenerate] = useState(null)
   const confirmRegenerateButton = useRef(null)
@@ -674,7 +688,8 @@ function App() {
 
   const week = leagueData ? Math.min(selectedWeek || leagueData.currentWeek, leagueData.currentWeek) : null
   const weekData = week ? leagueData?.weeks?.[week] : null
-  const currentBannerCopy = bannerCopy?.key === (leagueData && week ? `sunday-club-banner-copy-${leagueData.league.id}-${leagueData.league.season}-${week}` : null) ? bannerCopy : null
+  const bannerCopyStatus = weekData?.isLive ? 'live' : 'final'
+  const currentBannerCopy = bannerCopy?.key === (leagueData && week ? `sunday-club-banner-copy-${leagueData.league.id}-${leagueData.league.season}-${week}-${bannerCopyStatus}` : null) ? bannerCopy : null
   const awards = buildAwards(weekData)
   const recapStorageKey = leagueData && week ? `sunday-club-recap-${leagueData.league.id}-${leagueData.league.season}-${week}` : null
   useEffect(() => {
@@ -682,7 +697,7 @@ function App() {
     const timer = window.setInterval(() => setRecapProgressStep((step) => (step + 1) % 3), 2200)
     return () => window.clearInterval(timer)
   }, [generatingRecap])
-  const bannerCopyStorageKey = leagueData && week ? `sunday-club-banner-copy-${leagueData.league.id}-${leagueData.league.season}-${week}` : null
+  const bannerCopyStorageKey = leagueData && week ? `sunday-club-banner-copy-${leagueData.league.id}-${leagueData.league.season}-${week}-${bannerCopyStatus}` : null
   useEffect(() => {
     if (!bannerCopyStorageKey || !weekData) return
     let activeRequest = true
@@ -772,7 +787,7 @@ function App() {
       <Header onMenu={() => setMenuOpen(true)} darkMode={darkMode} onToggleDarkMode={toggleDarkMode} favoriteTeam={favoriteTeam} onFavoriteTeamChange={changeFavoriteTeam} />
       {loading && !leagueData && <div className="api-state"><LoaderCircle size={22} className="loading-spinner" /><strong>Loading your Sleeper league…</strong><span>Pulling standings and matchup data.</span></div>}
       {loadError && !leagueData && <div className="api-state api-error"><strong>Couldn’t load this league</strong><span>{loadError}</span><button className="generate-button" onClick={() => setRefreshAttempt((value) => value + 1)}><RefreshCw size={15} /> Try again</button></div>}
-      {leagueData && weekData && (active === 'Awards & records' ? <AwardsPage leagueData={leagueData} /> : active === 'Matchups' ? <MatchupsPage leagueData={leagueData} week={week} weekData={weekData} onWeekChange={setSelectedWeek} /> : active === 'Standings' ? <StandingsPage leagueData={leagueData} /> : <div className="page-content">
+      {leagueData && weekData && (active === 'Awards & records' ? <AwardsPage leagueData={leagueData} focusAwardKey={focusAwardKey} onFocusAwardHandled={() => setFocusAwardKey(null)} /> : active === 'Matchups' ? <MatchupsPage leagueData={leagueData} week={week} weekData={weekData} onWeekChange={setSelectedWeek} /> : active === 'Standings' ? <StandingsPage leagueData={leagueData} /> : <div className="page-content">
         <div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line" /> {leagueData.league.season} SEASON <span className="eyebrow-sun">✳</span> WEEK {week}</div><h1>Week {week}, in focus <span className="wave">✦</span></h1><p className="welcome-subtitle">{weekData.isLive ? 'Live scores are rolling in across the league.' : 'The league has entered its “every point matters” era.'}</p></div><WeekPicker weeks={leagueData.weeks} week={week} currentWeek={leagueData.currentWeek} lastCompletedWeek={leagueData.lastCompletedWeek} onChange={setSelectedWeek} /></div>
         <section className="featured-banner"><div className="banner-grain" /><div className="banner-content"><div className="live-label"><span /> WEEK {week} {weekData.isLive ? 'LIVE' : 'RECAP'} <span className="label-separator">/</span> {weekData.isLive ? 'IN PROGRESS' : 'FINAL'}</div><h2>{currentBannerCopy?.headline || (loadingBannerCopy ? 'Writing this week’s headline…' : 'The week is taking shape.')}</h2><p aria-live="polite">{currentBannerCopy?.subtitle || (loadingBannerCopy ? 'Pulling together the biggest score and closest finish.' : 'Matchup scores are not available for this week yet.')}</p><button className="banner-button" onClick={() => document.getElementById('weekly-recap')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Read this week’s recap <ArrowRight size={15} /></button></div><div className="banner-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="banner-ball">🏈</div><div className="art-star star-one">✳</div><div className="art-star star-two">✦</div><div className="art-score"><span>WEEK HIGH</span><strong>{weekData.highScore ? formatPoints(weekData.highScore.points) : '—'}</strong><small>PTS</small></div><div className="banner-sticker">{weekData.isLive ? 'LIVE\nSCORES' : 'WEEK\nWINNER'}</div></div><div className="banner-index">{String(week).padStart(2, '0')} <span>—</span> {String(leagueData.currentWeek).padStart(2, '0')}</div></section>
 
@@ -790,7 +805,7 @@ function App() {
             <section className="panel trend-panel"><div className="panel-heading"><div><div className="section-kicker">THE BIG PICTURE</div><h3>Scoring trends</h3></div><span className="select-pill">{leagueData.league.season} season</span></div><div className="trend-summary"><strong>Team high score</strong><span><i /> Average score by week</span></div><TrendChart darkMode={darkMode} data={leagueData.trend} average={weekData.average} /><div className="chart-footer"><span><span className="legend-dot green-dot" /> Team high</span><span><span className="legend-dash" /> League average</span><span className="trend-footnote">{leagueData.trend.length} weeks</span></div></section>
           </div>
           <div className="right-column">
-            <section className="panel awards-panel"><div className="panel-heading"><div><div className="section-kicker">THE HARDWARE</div><h3>Week {week} awards <span className="award-count">{String(awards.length).padStart(2, '0')}</span></h3></div></div><div className="award-list">{awards.slice(0, 4).map((award, index) => <AwardCard award={award} featured={index === 0} key={award.title} />)}</div><button className="standings-link" onClick={() => setActive('Awards & records')}>All awards &amp; records <ArrowRight size={14} /></button><div className="awards-foot"><Sparkles size={14} /><span>Calculated from Sleeper matchup scores.</span></div></section>
+            <section className="panel awards-panel"><div className="panel-heading"><div><div className="section-kicker">THE HARDWARE</div><h3>Week {week} awards <span className="award-count">{String(awards.length).padStart(2, '0')}</span></h3></div></div><div className="award-list">{awards.slice(0, 4).map((award, index) => <AwardCard award={award} featured={index === 0} key={award.title} onClick={(key) => { setFocusAwardKey(key); setActive('Awards & records') }} />)}</div><button className="standings-link" onClick={() => setActive('Awards & records')}>All awards &amp; records <ArrowRight size={14} /></button><div className="awards-foot"><Sparkles size={14} /><span>Calculated from Sleeper matchup scores.</span></div></section>
           </div>
         </div>
         <footer className="page-footer"><span>{leagueData.league.name} <span className="footer-dot">·</span> Season {leagueData.league.season}</span><span>Live stats from Sleeper <span className="footer-heart">♥</span></span></footer>
