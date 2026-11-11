@@ -821,8 +821,8 @@ function App() {
     setRecapError('')
     try {
       const allMatchups = weekData.matchups.map(({ home, away, margin }) => ({
-        home: { name: home.team.name, manager: home.team.manager, score: home.points, starters: [...home.starters].sort((a, b) => b.points - a.points).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), bench: (home.benchPlayers || []).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), eligibleBenchUpgrades: home.eligibleBenchUpgrades || [] },
-        away: { name: away.team.name, manager: away.team.manager, score: away.points, starters: [...away.starters].sort((a, b) => b.points - a.points).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), bench: (away.benchPlayers || []).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), eligibleBenchUpgrades: away.eligibleBenchUpgrades || [] },
+        home: { name: home.team.name, manager: home.team.manager, score: home.points, starters: [...home.starters].sort((a, b) => b.points - a.points).map(({ name, position, points }) => ({ name, position, points })), bench: (home.benchPlayers || []).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), eligibleBenchUpgrades: home.eligibleBenchUpgrades || [] },
+        away: { name: away.team.name, manager: away.team.manager, score: away.points, starters: [...away.starters].sort((a, b) => b.points - a.points).map(({ name, position, points }) => ({ name, position, points })), bench: (away.benchPlayers || []).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), eligibleBenchUpgrades: away.eligibleBenchUpgrades || [] },
         margin,
       }))
       const matchups = targetIndex === null ? allMatchups : [allMatchups[targetIndex]]
