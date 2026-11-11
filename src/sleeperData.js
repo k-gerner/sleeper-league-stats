@@ -128,20 +128,17 @@ function slotCanAcceptPlayer(position, slot) {
 
 function findBenchUpgrades(benchPlayers, starters, rosterPositions = []) {
   const starterSlots = rosterPositions.filter((slot) => !['BN', 'IR', 'TAXI'].includes(slot))
-  return benchPlayers.map((benchPlayer) => {
-    const eligibleStarter = starters
+  return benchPlayers.flatMap((benchPlayer) => starters
       .map((starter, index) => ({ starter, slot: starterSlots[index] || starter.position }))
       .filter(({ starter, slot }) => starter.id && !starter.name.startsWith('Player ') && slotCanAcceptPlayer(benchPlayer.position, slot))
       .filter(({ starter }) => benchPlayer.points > starter.points)
-      .sort((left, right) => left.starter.points - right.starter.points)[0]
-    if (!eligibleStarter) return null
-    return {
-      benchPlayer: { name: benchPlayer.name, position: benchPlayer.position, points: benchPlayer.points },
-      starter: { name: eligibleStarter.starter.name, position: eligibleStarter.starter.position, points: eligibleStarter.starter.points },
-      slot: eligibleStarter.slot,
-      pointDifference: benchPlayer.points - eligibleStarter.starter.points,
-    }
-  }).filter(Boolean).sort((left, right) => right.pointDifference - left.pointDifference).slice(0, 3)
+      .map(({ starter, slot }) => ({
+        benchPlayer: { name: benchPlayer.name, position: benchPlayer.position, points: benchPlayer.points },
+        starter: { name: starter.name, position: starter.position, points: starter.points },
+        slot,
+        pointDifference: benchPlayer.points - starter.points,
+      })))
+    .sort((left, right) => right.pointDifference - left.pointDifference)
 }
 
 function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek, players) {
@@ -212,7 +209,10 @@ function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek, players
   const blowout = [...matchups].sort((a, b) => b.margin - a.margin)[0] || null
   const heartbreak = matchups.map((matchup) => matchup.loser).sort((a, b) => b.points - a.points)[0] || null
   const benchLeader = [...rosterRows].sort((a, b) => b.benchPoints - a.benchPoints)[0] || null
+  const bestBenchUpgrade = rosterRows.flatMap((team) => team.eligibleBenchUpgrades.map((upgrade) => ({ team, upgrade })))
+    .sort((a, b) => b.upgrade.pointDifference - a.upgrade.pointDifference)[0] || null
   const benchPlayerLeader = [...rosterRows].filter((team) => team.topBenchPlayer).sort((a, b) => b.topBenchPlayer.points - a.topBenchPlayer.points)[0] || null
+  const benchUpgradeLeader = bestBenchUpgrade ? { ...bestBenchUpgrade.team, topBenchUpgrade: bestBenchUpgrade.upgrade } : null
   const oneManShow = [...rosterRows].filter((team) => team.topStarter && team.points > 0).sort((a, b) => (b.topStarter.points / b.points) - (a.topStarter.points / a.points))[0] || null
   const doubleTrouble = [...rosterRows].sort((a, b) => b.startersOverTwenty - a.startersOverTwenty || b.points - a.points)[0] || null
   const flexLeader = [...rosterRows].filter((team) => team.flexPlayer).sort((a, b) => b.flexPlayer.points - a.flexPlayer.points)[0] || null
@@ -224,7 +224,9 @@ function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek, players
     week,
     isLive: week > lastCompletedWeek,
     teams: rosterRows,
-    matchups: matchups.sort((a, b) => a.margin - b.margin),
+    // Keep matchup order stable as live scores change. Recaps are saved per
+    // matchup, so sorting by margin here would shift their displayed index.
+    matchups: matchups.sort((a, b) => String(a.home.matchupId ?? a.home.rosterId).localeCompare(String(b.home.matchupId ?? b.home.rosterId), undefined, { numeric: true })),
     highScore,
     highestScoringPlayer,
     closest,
@@ -232,6 +234,7 @@ function makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek, players
     heartbreak,
     benchLeader,
     benchPlayerLeader,
+    benchUpgradeLeader,
     oneManShow,
     doubleTrouble: doubleTrouble?.startersOverTwenty > 0 ? doubleTrouble : null,
     flexLeader,

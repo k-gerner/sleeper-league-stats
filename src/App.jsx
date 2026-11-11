@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3, Check,
   CalendarDays, ChevronDown, ChevronRight, Flame, Gauge,
@@ -267,6 +267,10 @@ function isCompleteStructuredRecap(recap) {
   return ['result', 'homeStory', 'awayStory', 'punchline'].every((key) => hasRecapText(recap[key])) && Array.isArray(recap.benchNote)
 }
 
+function recapMatchupKey(matchup) {
+  return `${matchup.home.rosterId}-${matchup.away.rosterId}`
+}
+
 function isVerifiedBenchNote(segments, matchup) {
   if (!hasRecapText(segments)) return false
   const note = segments.map((segment) => segment.text).join(' ').toLocaleLowerCase()
@@ -386,13 +390,15 @@ function TrendChart({ darkMode, data, average }) {
 function MatchupCard({ matchup, gameStatuses }) {
   const [expanded, setExpanded] = useState(false)
   const homeWon = matchup.home.points > matchup.away.points
-  return <div className={`matchup-card ${expanded ? 'matchup-expanded' : ''}`}>
-    <div className="matchup-row"><div className="matchup-status"><span className={`status-dot ${matchup.status === 'LIVE' ? 'yellow' : 'green'}`} />{matchup.status}</div><div className="matchup-teams"><div className={`matchup-team ${homeWon ? 'winner' : ''}`}><Avatar initials={matchup.home.team.initials} src={matchup.home.team.avatar} fallbackSrc={matchup.home.team.avatarFallback} color="#dce9d3" small /><span>{matchup.home.team.name}</span><b>{formatPoints(matchup.home.points)}</b></div><div className={`matchup-team ${!homeWon ? 'winner' : ''}`}><Avatar initials={matchup.away.team.initials} src={matchup.away.team.avatar} fallbackSrc={matchup.away.team.avatarFallback} color="#eee2d6" small /><span>{matchup.away.team.name}</span><b>{formatPoints(matchup.away.points)}</b></div></div><div className="matchup-margin">{formatPoints(matchup.margin)}<span>diff</span></div><button type="button" className="matchup-expand-button" aria-label={`${expanded ? 'Hide' : 'Show'} ${matchup.home.team.name} and ${matchup.away.team.name} lineups`} aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}><ChevronRight size={16} className="muted-icon matchup-chevron" /></button></div>
+  return <div className={`matchup-card ${expanded ? 'matchup-expanded' : ''}`} role="button" tabIndex={0} aria-expanded={expanded} aria-label={`${expanded ? 'Hide' : 'Show'} ${matchup.home.team.name} and ${matchup.away.team.name} lineups`} onClick={(event) => { if (event.target.closest('.matchup-row')) setExpanded((value) => !value) }} onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setExpanded((value) => !value) } }}>
+    <div className="matchup-row"><div className="matchup-status"><span className={`status-dot ${matchup.status === 'LIVE' ? 'yellow' : 'green'}`} />{matchup.status}</div><div className="matchup-teams"><div className={`matchup-team ${homeWon ? 'winner' : ''}`}><Avatar initials={matchup.home.team.initials} src={matchup.home.team.avatar} fallbackSrc={matchup.home.team.avatarFallback} color="#dce9d3" small /><span>{matchup.home.team.name}</span><b>{formatPoints(matchup.home.points)}</b></div><div className={`matchup-team ${!homeWon ? 'winner' : ''}`}><Avatar initials={matchup.away.team.initials} src={matchup.away.team.avatar} fallbackSrc={matchup.away.team.avatarFallback} color="#eee2d6" small /><span>{matchup.away.team.name}</span><b>{formatPoints(matchup.away.points)}</b></div></div><div className="matchup-margin">{formatPoints(matchup.margin)}<span>diff</span></div><span className="matchup-expand-button" aria-hidden="true"><ChevronRight size={16} className="muted-icon matchup-chevron" /></span></div>
     {expanded && <div className="matchup-lineups">{[matchup.home, matchup.away].map((team) => <section className="matchup-lineup" key={team.rosterId}><h4>{team.team.name} <span>{formatPoints(team.points)} pts</span></h4>{team.starters.map((player) => {
       const gameState = gameStatuses && player.team ? gameStatuses[player.team] : null
-      const gameLabel = gameState === 'pre' ? 'Yet to play' : gameState === 'in' ? 'Playing' : gameState === 'post' ? 'Played' : gameStatuses && player.team ? 'Bye' : null
+      // Free agents have no NFL team code for the schedule lookup. A positive
+      // weekly score still confirms they played, so preserve that status.
+      const gameLabel = gameState === 'pre' ? 'Yet to play' : gameState === 'in' ? 'Playing' : gameState === 'post' || (!player.team && player.points > 0) ? 'Played' : gameStatuses && player.team ? 'Bye' : null
       const teamTheme = teamThemeByCode[player.team]
-      return <div className="matchup-player" key={player.id}><span className="player-position">{player.position || 'Starter'}</span><span className="player-ident">{player.team && <small className="player-team" style={teamTheme ? { '--player-team-primary': teamTheme.primary, '--player-team-accent': teamTheme.accent } : undefined}>{player.team}</small>}<strong>{player.name}</strong></span>{gameLabel && <small className={`player-game-status ${gameState === 'pre' ? 'player-not-started' : ''}`}>{gameLabel}</small>}<b>{formatPoints(player.points)}</b></div>
+      return <div className="matchup-player" key={player.id}><span className="player-position">{player.position || 'Starter'}</span><span className="player-ident"><small className={`player-team ${player.team ? '' : 'player-team-free-agent'}`} style={teamTheme ? { '--player-team-primary': teamTheme.primary, '--player-team-accent': teamTheme.accent } : undefined}>{player.team || 'FA'}</small><strong>{player.name}</strong></span>{gameLabel && <small className={`player-game-status ${gameState === 'pre' ? 'player-not-started' : ''}`}>{gameLabel}</small>}<b>{formatPoints(player.points)}</b></div>
     })}</section>)}</div>}
   </div>
 }
@@ -463,7 +469,7 @@ function AwardCard({ award, featured = false, onClick }) {
 function buildAwards(weekData) {
   if (!weekData) return []
   const awards = []
-  const addAward = (key, icon, title, winner, detail, color, coWinners = []) => {
+  const addAward = (key, icon, title, winner, detail, color, coWinners = [], highlight = {}) => {
     if (!winner) return
     const recipients = [winner, ...coWinners]
     awards.push({
@@ -471,30 +477,36 @@ function buildAwards(weekData) {
       person: recipients.map((team) => team.team.manager).join(' + '),
       teamName: recipients.map((team) => team.team.name).join(' + '),
       teamIds: recipients.map((team) => team.team.id),
-      detail, color,
-      recipientDetails: recipients.map((team) => ({ teamId: team.team.id, teamName: team.team.name, result: key === 'shootout' ? (team.points >= (team === weekData.highestCombined.home ? weekData.highestCombined.away.points : weekData.highestCombined.home.points) ? 'W' : 'L') : null })),
+      detail, color, ...highlight,
+      recipientDetails: recipients.map((team) => ({ teamId: team.team.id, teamName: team.team.name, points: team.points, result: key === 'shootout' ? (team.points >= (team === weekData.highestCombined.home ? weekData.highestCombined.away.points : weekData.highestCombined.home.points) ? 'W' : 'L') : null })),
     })
   }
   addAward('point-press', '🏆', 'The Point Press', weekData.highScore, `Week high: ${formatPoints(weekData.highScore?.points)} points`, 'award-gold')
   const heartbreakMatchup = weekData.heartbreak && weekData.matchups?.find((matchup) => matchup.loser?.team.id === weekData.heartbreak.team.id)
   addAward('heartbreaker', '🫠', 'Heartbreaker', weekData.heartbreak, heartbreakMatchup ? `${formatPoints(weekData.heartbreak.points)}–${formatPoints(heartbreakMatchup.winner.points)} vs ${heartbreakMatchup.winner.team.name}` : `${formatPoints(weekData.heartbreak?.points)} points in a loss`, 'award-coral')
-  const benchPlayerLeader = weekData.benchPlayerLeader || [...(weekData.teams || [])]
-    .filter((team) => team.topBenchPlayer?.points > 0)
-    .sort((a, b) => b.topBenchPlayer.points - a.topBenchPlayer.points)[0]
-  if (benchPlayerLeader?.topBenchPlayer?.points > 0) {
-    const player = benchPlayerLeader.topBenchPlayer
-    addAward('bench-regret', '🪑', 'Benchwarmer’s Regret', benchPlayerLeader, `${player.name}: ${formatPoints(player.points)} points left on the bench`, 'award-blue')
+  const benchPlayerLeader = weekData.benchUpgradeLeader
+  if (benchPlayerLeader?.topBenchUpgrade) {
+    const { benchPlayer: player } = benchPlayerLeader.topBenchUpgrade
+    const benchComparisons = benchPlayerLeader.eligibleBenchUpgrades
+      .filter((upgrade) => upgrade.benchPlayer.name === player.name && upgrade.benchPlayer.points === player.points)
+      .slice(0, 1)
+    addAward('bench-regret', '🪑', 'Benchwarmer’s Regret', benchPlayerLeader, `${player.name}: ${formatPoints(player.points)} points on the bench`, 'award-blue', [], {
+      playerName: player.name,
+      playerPoints: formatPoints(player.points),
+      benchComparisons,
+      benchGap: formatPoints(benchPlayerLeader.topBenchUpgrade.pointDifference),
+    })
   }
   addAward('nail-biter', '😮‍💨', 'Nail-Biter', weekData.closest?.winner, weekData.closest ? `Won by ${formatPoints(weekData.closest.margin)} points` : '', 'award-lilac')
   addAward('blowout', '💥', 'The Blowout', weekData.blowout?.winner, weekData.blowout ? WonBy(weekData.blowout.margin) : '', 'award-coral')
   if (weekData.oneManShow?.topStarter) {
     const share = Math.round((weekData.oneManShow.topStarter.points / weekData.oneManShow.points) * 100)
-    addAward('one-man-show', '🦸', 'One-Man Show', weekData.oneManShow, `${weekData.oneManShow.topStarter.name}: ${formatPoints(weekData.oneManShow.topStarter.points)} · ${share}% of team points`, 'award-lilac')
+    addAward('one-man-show', '🦸', 'One-Man Show', weekData.oneManShow, `${weekData.oneManShow.topStarter.name}: ${formatPoints(weekData.oneManShow.topStarter.points)} · ${share}% of team points`, 'award-lilac', [], { playerName: weekData.oneManShow.topStarter.name, playerPoints: formatPoints(weekData.oneManShow.topStarter.points), playerShare: `${share}%` })
   }
   if (weekData.doubleTrouble?.startersOverTwenty >= 2) addAward('double-trouble', '⚡', 'Double Trouble', weekData.doubleTrouble, `${weekData.doubleTrouble.startersOverTwenty} starters scored 20+`, 'award-gold')
-  if (weekData.flexLeader?.flexPlayer) addAward('flex-appeal', '🧩', 'Flex Appeal', weekData.flexLeader, `${weekData.flexLeader.flexPlayer.name} dropped ${formatPoints(weekData.flexLeader.flexPlayer.points)} in the flex`, 'award-blue')
-  if (weekData.kickerLeader?.kicker) addAward('kicker-therapy', '🦵', 'Kicker Therapy', weekData.kickerLeader, `${weekData.kickerLeader.kicker.name} put up ${formatPoints(weekData.kickerLeader.kicker.points)}`, 'award-coral')
-  if (weekData.highestCombined) addAward('shootout', '🎆', 'Sunday Shootout', weekData.highestCombined.home, `${formatPoints(weekData.highestCombined.home.points + weekData.highestCombined.away.points)} combined points`, 'award-gold', [weekData.highestCombined.away])
+  if (weekData.flexLeader?.flexPlayer) addAward('flex-appeal', '🧩', 'Flex Appeal', weekData.flexLeader, `${weekData.flexLeader.flexPlayer.name} dropped ${formatPoints(weekData.flexLeader.flexPlayer.points)} in the flex`, 'award-blue', [], { playerName: weekData.flexLeader.flexPlayer.name, playerPoints: formatPoints(weekData.flexLeader.flexPlayer.points) })
+  if (weekData.kickerLeader?.kicker) addAward('kicker-therapy', '🦵', 'Kicker Therapy', weekData.kickerLeader, `${weekData.kickerLeader.kicker.name} put up ${formatPoints(weekData.kickerLeader.kicker.points)}`, 'award-coral', [], { playerName: weekData.kickerLeader.kicker.name, playerPoints: formatPoints(weekData.kickerLeader.kicker.points) })
+  if (weekData.highestCombined) addAward('shootout', '🎆', 'Sunday Shootout', weekData.highestCombined.home, `${formatPoints(weekData.highestCombined.home.points + weekData.highestCombined.away.points)} combined points`, 'award-gold', [weekData.highestCombined.away], { shootoutTotal: formatPoints(weekData.highestCombined.home.points + weekData.highestCombined.away.points) })
   return awards
 }
 
@@ -502,10 +514,30 @@ function WonBy(margin) {
   return `Won by ${formatPoints(margin)} points`
 }
 
+function TallyAwardDetail({ detail, playerName, playerPoints, playerShare }) {
+  const escapePattern = (value) => value?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const emphasisPattern = new RegExp(`(${[escapePattern(playerName), escapePattern(playerPoints), escapePattern(playerShare), '(?:\\d+(?:\\.\\d+)?(?: points?| pts))'].filter(Boolean).join('|')})`, 'gi')
+  return detail.split(emphasisPattern).filter(Boolean).map((part, index) => {
+    if ((playerName && part.toLocaleLowerCase() === playerName.toLocaleLowerCase()) || (playerShare && part === playerShare)) return <strong className="recap-player-emphasis" key={index}>{part}</strong>
+    if ((playerPoints && part === playerPoints) || /^\d+(?:\.\d+)?(?: points?| pts)$/i.test(part)) return <span className="recap-stat-emphasis" key={index}>{part}</span>
+    return <Fragment key={index}>{part}</Fragment>
+  })
+}
+
+function BenchComparisonList({ comparisons }) {
+  if (!comparisons?.length) return null
+  return <ul className="award-bench-comparisons">{comparisons.map(({ starter, slot, pointDifference }, index) => <li key={`${starter.name}-${slot}-${index}`}>Could have replaced <strong>{starter.name}</strong> in {slot} for <span className="recap-stat-emphasis">+{formatPoints(pointDifference)}</span> points</li>)}</ul>
+}
+
+function ShootoutTeamScores({ teamScores, compact = false }) {
+  if (!teamScores?.length) return null
+  return <ul className="award-shootout-scores">{teamScores.map(({ teamId, teamName, points, result }) => <li key={teamId}>{(!compact || teamScores.length > 1) && <><strong>{teamName}</strong>{' '}</>}{result && `(${result}) `}<span className="recap-stat-emphasis">{formatPoints(points)}</span> points</li>)}</ul>
+}
+
 const awardCatalog = [
   { key: 'point-press', icon: '🏆', title: 'The Point Press', description: 'Highest team score of the week.' },
   { key: 'heartbreaker', icon: '🫠', title: 'Heartbreaker', description: 'Highest score in a losing matchup.' },
-  { key: 'bench-regret', icon: '🪑', title: 'Benchwarmer’s Regret', description: 'Highest-scoring single player left on a bench.' },
+  { key: 'bench-regret', icon: '🪑', title: 'Benchwarmer’s Regret', description: 'Largest score gap between a benched player and a starter they could replace.' },
   { key: 'nail-biter', icon: '😮‍💨', title: 'Nail-Biter', description: 'Winner of the closest matchup.' },
   { key: 'blowout', icon: '💥', title: 'The Blowout', description: 'Largest margin of victory.' },
   { key: 'one-man-show', icon: '🦸', title: 'One-Man Show', description: 'Largest share of team points from one starter.' },
@@ -543,7 +575,8 @@ function buildAwardArchive(leagueData) {
         countsByAward.get(award.key)?.set(personId, (countsByAward.get(award.key)?.get(personId) || 0) + 1)
         const teamIds = new Set(award.teamIds.filter((teamId) => String(teamsById.get(teamId)?.managerId || teamId) === personId))
         const recipientDetails = (award.recipientDetails || []).filter((recipient) => teamIds.has(recipient.teamId) && recipient.result)
-        eventsByAward.get(award.key)?.get(personId)?.push({ week: week.week, detail: award.detail, teamName: award.teamName, recipientDetails })
+        const teamName = [...teamIds].map((teamId) => teamsById.get(teamId)?.name).filter(Boolean).join(' + ') || award.teamName
+        eventsByAward.get(award.key)?.get(personId)?.push({ week: week.week, detail: award.detail, teamName, playerName: award.playerName, playerPoints: award.playerPoints, playerShare: award.playerShare, benchComparisons: award.benchComparisons, benchGap: award.benchGap, shootoutTotal: award.shootoutTotal, recipientDetails })
       }
     }
   }
@@ -555,7 +588,32 @@ function buildAwardArchive(leagueData) {
       count: countsByAward.get(award.key)?.get(person.id) || 0,
       events: eventsByAward.get(award.key)?.get(person.id) || [],
     })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-    return { ...award, total: personCounts.reduce((total, person) => total + person.count, 0), people: personCounts }
+    const weekGroups = new Map()
+    for (const person of personCounts) {
+      for (const event of person.events) {
+        if (!weekGroups.has(event.week)) weekGroups.set(event.week, [])
+        weekGroups.get(event.week).push({
+          personId: person.id,
+          name: person.name,
+          count: person.count,
+          teamName: event.teamName,
+          detail: event.detail,
+          playerName: event.playerName,
+          recipientDetails: event.recipientDetails,
+          playerPoints: event.playerPoints,
+          playerShare: event.playerShare,
+          benchComparisons: event.benchComparisons,
+          benchGap: event.benchGap,
+          shootoutTotal: event.shootoutTotal,
+        })
+      }
+    }
+    return {
+      ...award,
+      total: personCounts.reduce((total, person) => total + person.count, 0),
+      people: personCounts,
+      weeks: [...weekGroups].sort(([weekA], [weekB]) => weekB - weekA).map(([week, recipients]) => ({ week, recipients })),
+    }
   })
   const leaders = [...people.values()].map((person) => ({
     ...person,
@@ -578,7 +636,7 @@ function buildAwardArchive(leagueData) {
 function AwardHistoryItem({ award }) {
   return <article className="history-award-item">
     <span className={`history-award-icon ${award.color}`}>{award.icon}</span>
-    <div className="history-award-copy"><span className="history-award-title">{award.title}</span><strong>{award.teamName}</strong><span className="history-award-team">{award.person}</span><small>{award.detail}</small></div>
+    <div className="history-award-copy"><span className="history-award-title">{award.title}</span><strong>{award.shootoutTotal ? award.person : award.teamName}</strong>{!award.shootoutTotal && <span className="history-award-team">{award.person}</span>}{award.shootoutTotal ? <><small>Combined total: <span className="recap-stat-emphasis">{award.shootoutTotal}</span> points</small><ShootoutTeamScores teamScores={award.recipientDetails} /></> : <small>{award.detail}</small>}<BenchComparisonList comparisons={award.benchComparisons} /></div>
   </article>
 }
 
@@ -601,7 +659,7 @@ function AwardsPage({ leagueData, focusAwardKey, onFocusAwardHandled }) {
     { icon: '😮‍💨', title: 'Closest finish', result: seasonWeeks.map(({ week, weekData }) => ({ week, matchup: weekData.closest, value: weekData.closest?.margin })).filter((item) => item.matchup).sort((a, b) => a.value - b.value)[0], format: (record) => `${formatPoints(record.value)} pts` },
     { icon: '🪙', title: 'Weakest win', result: seasonWeeks.flatMap(({ week, weekData }) => (weekData.matchups || []).map((matchup) => ({ week, team: matchup.winner, value: matchup.winner.points }))).filter((item) => item.team).sort((a, b) => a.value - b.value)[0], format: (record) => `${formatPoints(record.value)} pts` },
     { icon: '💥', title: 'Biggest blowout', result: seasonWeeks.map(({ week, weekData }) => ({ week, matchup: weekData.blowout, value: weekData.blowout?.margin })).filter((item) => item.matchup).sort((a, b) => b.value - a.value)[0], format: (record) => `${formatPoints(record.value)} pts` },
-    { icon: '🪑', title: 'Highest-scoring benched player', result: seasonWeeks.map(({ week, weekData }) => ({ week, team: weekData.benchPlayerLeader, value: weekData.benchPlayerLeader?.topBenchPlayer?.points, player: weekData.benchPlayerLeader?.topBenchPlayer?.name })).filter((item) => item.team).sort((a, b) => b.value - a.value)[0], format: (record) => `${record.player} · ${formatPoints(record.value)} pts` },
+    { icon: '🪑', title: 'Biggest bench regret', result: seasonWeeks.map(({ week, weekData }) => { const team = weekData.benchUpgradeLeader; const upgrade = team?.topBenchUpgrade; return { week, team, value: upgrade?.pointDifference, player: upgrade?.benchPlayer?.name, starter: upgrade?.starter?.name, holder: upgrade ? `${upgrade.benchPlayer.name} would replace ${upgrade.starter.name}` : null, teamName: upgrade ? team.team.name : null } }).filter((item) => item.team && Number.isFinite(item.value)).sort((a, b) => b.value - a.value)[0], format: (record) => `+${formatPoints(record.value)} pts` },
     { icon: '🌟', title: 'Highest-scoring rostered player', result: seasonWeeks.flatMap(({ week, weekData }) => (weekData.teams || []).flatMap((team) => (team.rosteredPlayers || []).map((player) => ({ week, team, player, value: player.points })))).filter((item) => item.value > 0).sort((a, b) => b.value - a.value)[0], format: (record) => `${record.player.name} · ${formatPoints(record.value)} pts` },
   ].filter((record) => record.result)
 
@@ -612,11 +670,11 @@ function AwardsPage({ leagueData, focusAwardKey, onFocusAwardHandled }) {
 
     <section className="season-records-section"><div className="award-section-heading"><div><div className="section-kicker">{leagueData.league.season} SEASON TO DATE</div><h2>Season records</h2></div></div><div className="season-record-grid">{records.map((record) => {
       const recipient = record.result.team
-      const who = record.result.matchup ? `${record.result.matchup.home.team.name} vs ${record.result.matchup.away.team.name}` : recipient?.team?.name || 'League record'
-      return <article className="season-record-card" key={record.title}><span className="record-card-icon">{record.icon}</span><span className="record-card-title">{record.title}</span><strong>{record.format(record.result)}</strong><span className="record-card-holder">{who}</span><small>Week {record.result.week}</small></article>
+      const who = record.result.matchup ? `${record.result.matchup.home.team.name} vs ${record.result.matchup.away.team.name}` : record.result.holder || recipient?.team?.name || 'League record'
+      return <article className="season-record-card" key={record.title}><span className="record-card-icon">{record.icon}</span><span className="record-card-title">{record.title}</span><strong>{record.format(record.result)}</strong><span className="record-card-holder">{who}</span>{record.result.teamName && <span className="record-card-team">{record.result.teamName}</span>}<small>Week {record.result.week}</small></article>
     })}</div></section>
 
-    <section className="award-tallies-section"><div className="award-section-heading"><div><div className="section-kicker">EVERY CATEGORY, EVERY RECIPIENT</div><h2>Award tallies</h2></div><p>Open an award to see each recipient’s wins and the details for each week.</p></div><div className="award-tally-grid">{archive.tallies.filter((award) => award.total > 0).map((award) => <details className="award-tally-card" id={`award-tally-${award.key}`} key={award.key}><summary><span className="tally-award-emoji">{award.icon}</span><span className="tally-award-main"><strong>{award.title}</strong><small>{award.description}</small></span><ChevronDown size={16} className="tally-chevron" /></summary><div className="tally-recipients">{award.people.filter((person) => person.count > 0).map((person, index) => <div className="tally-recipient" key={person.id}><span className="tally-recipient-rank">{String(index + 1).padStart(2, '0')}</span><div className="tally-recipient-info"><strong>{person.teams.join(', ')}</strong><small>{person.name}</small><ul className="tally-recipient-events">{person.events.map((event, eventIndex) => <li key={`${event.week}-${eventIndex}`}><b>Week {event.week}:</b> {event.recipientDetails?.length ? `${event.recipientDetails.map(({ result }) => `(${result})`).join(', ')} · ` : ''}{event.detail}</li>)}</ul></div><b>{person.count}</b></div>)}</div></details>)}</div></section>
+    <section className="award-tallies-section"><div className="award-section-heading"><div><div className="section-kicker">EVERY CATEGORY, EVERY RECIPIENT</div><h2>Award tallies</h2></div><p>Open an award to see its weekly recipients, team names, and win details.</p></div><div className="award-tally-grid">{archive.tallies.filter((award) => award.total > 0).map((award) => <details className="award-tally-card" id={`award-tally-${award.key}`} key={award.key}><summary><span className="tally-award-emoji">{award.icon}</span><span className="tally-award-main"><strong>{award.title}</strong><small>{award.description}</small></span><b className="tally-award-total">{award.total}<small> wins</small></b><ChevronDown size={16} className="tally-chevron" /></summary><div className="tally-recipients">{award.weeks.map(({ week, recipients }) => <section className="tally-week" key={week}><h3>Week {week}{recipients[0]?.shootoutTotal && <span className="tally-week-total">Combined total <b className="recap-stat-emphasis">{recipients[0].shootoutTotal}</b> points</span>}</h3>{recipients.map((recipient) => <div className="tally-recipient" key={`${week}-${recipient.personId}`}><div className="tally-recipient-info"><strong>{recipient.teamName}</strong><small>{recipient.name}</small>{recipient.shootoutTotal ? <ShootoutTeamScores teamScores={recipient.recipientDetails} compact /> : <ul className="tally-recipient-events"><li>{recipient.recipientDetails?.length ? `${recipient.recipientDetails.map(({ result }) => `(${result})`).join(', ')} · ` : ''}<TallyAwardDetail detail={recipient.detail} playerName={recipient.playerName} playerPoints={recipient.playerPoints} playerShare={recipient.playerShare} /></li></ul>}<BenchComparisonList comparisons={recipient.benchComparisons} /></div></div>)}</section>)}</div></details>)}</div></section>
 
     <section className="week-history-section"><div className="award-section-heading"><div><div className="section-kicker">THE WEEKLY HARDWARE</div><h2>Current &amp; past awards</h2></div><p>Live-week awards may change as Sleeper updates scores.</p></div><div className="week-history-list">{archive.weeks.map(({ week, weekData, awards }) => <details className="week-history-card" open={week === leagueData.currentWeek} key={week}><summary><span className="week-history-number">WEEK {String(week).padStart(2, '0')}</span><span className={`week-history-status ${weekData.isLive ? 'history-status-live' : ''}`}>{weekData.isLive ? 'LIVE' : 'FINAL'}</span><span className="week-history-count">{awards.length} awards</span><ChevronDown size={17} className="week-history-chevron" /></summary><div className="week-history-awards">{awards.map((award) => <AwardHistoryItem key={`${week}-${award.key}`} award={award} />)}{awards.length === 0 && <div className="week-no-awards">No matchup awards available for this week yet.</div>}</div></details>)}</div></section>
     <p className="award-method-note">Awards are calculated from Sleeper matchup and player scores. Current-week totals are provisional until scoring is final.</p>
@@ -630,6 +688,7 @@ function App() {
   const [confirmRegenerate, setConfirmRegenerate] = useState(null)
   const confirmRegenerateButton = useRef(null)
   const [savedRecap, setSavedRecap] = useState(null)
+  const autoFinalizedRecapKey = useRef(null)
   const [selectedRecapIndex, setSelectedRecapIndex] = useState(0)
   const [bannerCopy, setBannerCopy] = useState(null)
   const [loadingBannerCopy, setLoadingBannerCopy] = useState(false)
@@ -771,9 +830,9 @@ function App() {
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Recap generation failed.')
       const recaps = targetIndex === null
-        ? body.recaps
-        : (savedRecap?.recaps || []).map((recap, index) => index === targetIndex ? body.recaps[0] : recap)
-      const result = { generatedAt: new Date().toISOString(), recaps }
+        ? body.recaps.map((recap, index) => ({ ...recap, matchupKey: recapMatchupKey(weekData.matchups[index]) }))
+        : (savedRecap?.recaps || []).map((recap, index) => index === targetIndex ? { ...body.recaps[0], matchupKey: recapMatchupKey(weekData.matchups[index]) } : recap)
+      const result = { generatedAt: new Date().toISOString(), isFinal: !weekData.isLive, recaps }
       setSavedRecap(result)
       if (recapStorageKey) localStorage.setItem(recapStorageKey, JSON.stringify(result))
       if (!savedRecap) document.getElementById('weekly-recap')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -781,6 +840,12 @@ function App() {
       setRecapError(error.message || 'Recap generation failed. Check your connection and try again.')
     } finally { setGeneratingRecap(false) }
   }
+  useEffect(() => {
+    if (!savedRecap?.recaps?.length || weekData?.isLive || savedRecap.isFinal === true || !recapStorageKey || generatingRecap) return
+    if (autoFinalizedRecapKey.current === recapStorageKey) return
+    autoFinalizedRecapKey.current = recapStorageKey
+    generateRecap({ confirmed: true })
+  }, [savedRecap, weekData?.isLive, recapStorageKey, generatingRecap])
   return <div className="app-shell" data-theme={darkMode ? 'dark' : 'light'} style={{ '--team-primary': favoriteTeam.primary, '--team-accent': favoriteTeam.accent }}>
     <Sidebar active={active} setActive={setActive} open={menuOpen} onClose={() => setMenuOpen(false)} favoriteTeam={favoriteTeam} onFavoriteTeamChange={changeFavoriteTeam} league={leagueData?.league} darkMode={darkMode} onToggleDarkMode={toggleDarkMode} />
     <main className="main-area">
@@ -795,7 +860,7 @@ function App() {
           <div className="panel-heading"><div><div className="section-kicker">THE SUNDAY EDITION</div><h3>Week {week} matchup recaps</h3></div>{savedRecap && <span className="saved-tag">SAVED</span>}</div>
           {weekData.matchups.length > 0 && <RecapMatchupPicker matchups={weekData.matchups} selectedIndex={selectedRecapIndex} week={week} onSelect={setSelectedRecapIndex} />}
           {recapError && <p className="recap-error" role="alert">{recapError}</p>}
-          {savedRecap?.recaps?.length ? <div className="recap-list">{savedRecap.recaps.map((recap, index) => { if (index !== selectedRecapIndex) return null; const matchup = weekData.matchups[index]; if (!matchup) return null; const hasLegacyCopy = hasRecapText(recap.segments) || (typeof recap.text === 'string' && recap.text.trim()); return <article className="recap-card" key={`${matchup.home.team.name}-${matchup.away.team.name}-${index}`}><div className="recap-card-heading"><strong>{matchup.home.team.name}</strong><span>{formatPoints(matchup.home.points)} <i>—</i> {formatPoints(matchup.away.points)}</span><strong>{matchup.away.team.name}</strong></div>{isCompleteStructuredRecap(recap) ? <><div className="recap-result"><RecapSegments segments={recap.result} /></div><div className="recap-team-stories"><section className="recap-team-story"><h4>{matchup.home.team.name}<span>{formatPoints(matchup.home.points)}</span></h4><p><RecapSegments segments={recap.homeStory} /></p></section><section className="recap-team-story"><h4>{matchup.away.team.name}<span>{formatPoints(matchup.away.points)}</span></h4><p><RecapSegments segments={recap.awayStory} /></p></section></div>{isVerifiedBenchNote(recap.benchNote, matchup) && <aside className="recap-bench-note"><span>BENCH REGRET</span><p><RecapSegments segments={recap.benchNote} /></p></aside>}<p className="recap-punchline"><Sparkles size={13} /><span className="recap-punchline-text"><RecapSegments segments={recap.punchline} /></span></p></> : hasLegacyCopy ? <RecapCopy recap={recap} /> : <RecapFallback matchup={matchup} isLive={weekData.isLive} />}<button className="recap-retry-button" onClick={() => generateRecap({ targetIndex: index })} disabled={generatingRecap} aria-label={`Regenerate recap for ${matchup.home.team.name} vs ${matchup.away.team.name}`}><RefreshCw size={13} /><span>{generatingRecap ? 'Generating…' : 'Regenerate'}</span></button></article> })}</div> : <div className={`recap-empty ${generatingRecap ? 'recap-empty-generating' : ''}`} aria-live="polite" aria-busy={generatingRecap}><div className="recap-empty-icon">{generatingRecap ? <LoaderCircle size={22} className="loading-spinner" /> : <Sparkles size={19} />}</div><p key={generatingRecap ? `progress-${recapProgressStep}` : 'idle'}>{weekData.matchups.length ? (generatingRecap ? ['Reading the box scores…', 'Finding the week’s biggest moments…', 'Writing the matchup stories…'][recapProgressStep] : 'Generate a witty, stats-rich recap for every matchup this week.') : 'Recaps will be available when matchups have scoring data.'}</p>{generatingRecap && <div className="recap-progress-track" aria-hidden="true"><span /></div>}<button className="generate-button" onClick={() => generateRecap()} disabled={generatingRecap || !weekData.matchups.length}><Sparkles size={14} />{generatingRecap ? 'Generating…' : 'Generate recap'}</button></div>}
+          {savedRecap?.recaps?.length ? <div className="recap-list">{savedRecap.recaps.map((recap, index) => { const matchupIndex = recap.matchupKey ? weekData.matchups.findIndex((item) => recapMatchupKey(item) === recap.matchupKey) : index; if (matchupIndex !== selectedRecapIndex) return null; const matchup = weekData.matchups[matchupIndex]; if (!matchup) return null; const hasLegacyCopy = hasRecapText(recap.segments) || (typeof recap.text === 'string' && recap.text.trim()); return <article className="recap-card" key={`${matchup.home.team.name}-${matchup.away.team.name}-${index}`}><div className="recap-card-heading"><strong>{matchup.home.team.name}</strong><span>{formatPoints(matchup.home.points)} <i>—</i> {formatPoints(matchup.away.points)}</span><strong>{matchup.away.team.name}</strong></div>{isCompleteStructuredRecap(recap) ? <><div className="recap-result"><RecapSegments segments={recap.result} /></div><div className="recap-team-stories"><section className="recap-team-story"><h4>{matchup.home.team.name}<span>{formatPoints(matchup.home.points)}</span></h4><p><RecapSegments segments={recap.homeStory} /></p></section><section className="recap-team-story"><h4>{matchup.away.team.name}<span>{formatPoints(matchup.away.points)}</span></h4><p><RecapSegments segments={recap.awayStory} /></p></section></div>{isVerifiedBenchNote(recap.benchNote, matchup) && <aside className="recap-bench-note"><span>BENCH REGRET</span><p><RecapSegments segments={recap.benchNote} /></p></aside>}<p className="recap-punchline"><Sparkles size={13} /><span className="recap-punchline-text"><RecapSegments segments={recap.punchline} /></span></p></> : hasLegacyCopy ? <RecapCopy recap={recap} /> : <RecapFallback matchup={matchup} isLive={weekData.isLive} />}<button className="recap-retry-button" onClick={() => generateRecap({ targetIndex: index })} disabled={generatingRecap} aria-label={`Regenerate recap for ${matchup.home.team.name} vs ${matchup.away.team.name}`}><RefreshCw size={13} /><span>{generatingRecap ? 'Generating…' : 'Regenerate'}</span></button></article> })}</div> : <div className={`recap-empty ${generatingRecap ? 'recap-empty-generating' : ''}`} aria-live="polite" aria-busy={generatingRecap}><div className="recap-empty-icon">{generatingRecap ? <LoaderCircle size={22} className="loading-spinner" /> : <Sparkles size={19} />}</div><p key={generatingRecap ? `progress-${recapProgressStep}` : 'idle'}>{weekData.matchups.length ? (generatingRecap ? ['Reading the box scores…', 'Finding the week’s biggest moments…', 'Writing the matchup stories…'][recapProgressStep] : 'Generate a witty, stats-rich recap for every matchup this week.') : 'Recaps will be available when matchups have scoring data.'}</p>{generatingRecap && <div className="recap-progress-track" aria-hidden="true"><span /></div>}<button className="generate-button" onClick={() => generateRecap()} disabled={generatingRecap || !weekData.matchups.length}><Sparkles size={14} />{generatingRecap ? 'Generating…' : 'Generate recap'}</button></div>}
         </section>
 
         <section className="stats-grid" aria-label="League highlights"><StatCard icon={Trophy} label="Weekly high score" value={weekData.highScore ? formatPoints(weekData.highScore.points) : '—'} note={weekData.highScore?.team.name || 'No scores yet'} /><StatCard icon={Flame} label="Closest matchup" value={weekData.closest ? `${formatPoints(weekData.closest.margin)} pts` : '—'} note={weekData.closest?.winner.team.name || 'No matchup yet'} /><StatCard icon={Gauge} label="League average" value={formatPoints(weekData.average)} note={`${leagueData.league.teamCount} teams this week`} /><StatCard icon={Shield} label="Highest scoring player" value={weekData.highestScoringPlayer ? `${formatPoints(weekData.highestScoringPlayer.points)} pts` : '—'} note={weekData.highestScoringPlayer ? `${weekData.highestScoringPlayer.name} · ${weekData.highestScoringPlayer.team.name}` : 'No player scores yet'} /></section>
