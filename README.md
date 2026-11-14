@@ -1,6 +1,6 @@
 # Sunday Club — Sleeper League Dashboard
 
-A React + Tailwind dashboard for the Sleeper league **All Roads Lead to Odunze** (`1389752419247747072`). It loads league data from Sleeper's public API and uses OpenAI to generate witty, stats-based recaps of each weekly matchup and featured weekly banner copy. Generated text is saved in the current browser by season and week.
+A React + Tailwind dashboard for the Sleeper league **All Roads Lead to Odunze** (`1389752419247747072`). It loads league data from Sleeper's public API and uses OpenAI to generate witty, stats-based recaps of each weekly matchup and featured weekly banner copy. Recaps and banner copy are shared across visitors through Supabase; the dashboard data itself is still fetched from Sleeper by each browser.
 
 The sidebar's styled **Your Team Colors** picker lets you search all 32 NFL teams and previews their palettes with color swatches. The chosen team is stored as `sunday-club-favorite-team` in browser `localStorage`, so the preference stays on that device/browser without an account or backend. The header's light/dark toggle is also saved in browser storage, and the chosen team accents carry through both themes.
 
@@ -22,18 +22,19 @@ npm run dev
 
 Open the local URL printed in the terminal (usually `http://localhost:5173`). Keep the terminal process running while you use the site. Vite refreshes the browser when you save a source file. Press `Ctrl+C` in the terminal to stop the server.
 
-Sleeper data does not need an API key. OpenAI recap generation does require a key configured for the server, as described below.
+Sleeper data does not need an API key. OpenAI generation and shared generated content require the server environment variables described below, plus the Supabase `weekly_content` table.
 
 ### Configure OpenAI recaps
 
 1. Copy `.env.example` to `.env.local` in the project root.
-2. Set `OPENAI_API_KEY` to your OpenAI API key and `OPENAI_MODEL` to the model you want to use.
+2. Set `OPENAI_API_KEY` and `OPENAI_MODEL`, plus `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from your Supabase project.
 3. Restart the Vite development server after changing `.env.local`.
-4. Matchup recaps can be generated with **Generate recap**. Featured banner copy is generated automatically the first time a week is viewed. Both are saved in that browser; recap regeneration asks for confirmation before replacing saved recaps.
+4. Run the Supabase SQL setup that creates the `weekly_content` table and unique key described in the project setup instructions. The `/api/generate-recap` and `/api/generate-week-copy` endpoints read and write this table using the server-only secret key.
+5. Matchup recaps and featured banner copy generate on the first visit. During the Thursday 8 p.m.–midnight, Sunday 1 p.m.–midnight, and Monday 8 p.m.–midnight ET game windows, changed source data can trigger an automatic refresh after a one-hour cooldown. Manual recap regeneration can bypass the cooldown. On or after Tuesday at 1 a.m. ET, a visit generates final content.
 
-Keep `.env.local` private. It is ignored by Git, and the key is read only by the server endpoints; do not add the key to a `VITE_...` variable or frontend source. For Vercel, set `OPENAI_API_KEY` and `OPENAI_MODEL` under the project's **Settings → Environment Variables**, then redeploy. The `/api/generate-recap` and `/api/generate-week-copy` serverless functions handle production requests. The local Vite server provides both endpoints during development.
+Keep `.env.local` private. It is ignored by Git. The OpenAI and Supabase secret keys are read only by server endpoints; do not put them in a `VITE_...` variable or frontend source. For Vercel, set all four server variables under the project's **Settings → Environment Variables**, then redeploy. The `/api/generate-recap` and `/api/generate-week-copy` serverless functions handle production requests. The local Vite server provides both endpoints during development.
 
-Recaps are stored in browser `localStorage` and are specific to that browser/device. Clearing site storage removes them.
+Generated content is stored in Supabase and shared across devices. Theme and favorite-team settings remain in browser `localStorage`.
 
 ### Production build and local preview
 
@@ -59,7 +60,7 @@ Import this project in Vercel and use the Vite defaults:
 - Output directory: `dist`
 - Install command: `npm install`
 
-This project currently uses a Vercel serverless function for private OpenAI requests; no database or scheduled generation is configured.
+This project uses Vercel serverless functions for private OpenAI requests and Supabase for shared generated content. AI generation is on demand when someone visits; no scheduled AI generation is configured. League dashboard data is still fetched and calculated in each browser.
 
 ## Sleeper API notes
 

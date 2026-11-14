@@ -47,6 +47,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .generate-button { background: var(--team-deep); }
 .generate-button:hover { background: color-mix(in srgb, var(--team-deep) 83%, white); }
 .featured-banner { background: var(--team-deep); }
+.banner-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.banner-refresh-button { border-color: color-mix(in srgb, var(--team-primary) 42%, #84947e); }
+.banner-button:disabled { cursor: wait; opacity: .7; }
+.banner-copy-error { display: block; margin-top: 7px; color: #f0b6a9; font-size: 11px; }
 .featured-banner h2 em { color: var(--team-accent); }
 .live-label { color: color-mix(in srgb, var(--team-accent) 58%, #d8e1ce); }
 .banner-button { border-color: color-mix(in srgb, var(--team-primary) 42%, #84947e); }
@@ -514,6 +518,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .secondary-page { min-height: calc(100vh - 62px); }
 .weekly-recap { margin: 14px 0 18px; scroll-margin-top: 76px; }
 .recap-matchup-picker { position: relative; width: min(100%, 460px); margin: 13px 0 15px auto; }
+.recap-toolbar { display: block; }
+.recap-saved-tag { display: inline-block; margin-top: 7px; }
+@media (min-width: 701px) {
+  .recap-toolbar { display: grid; grid-template-columns: minmax(250px, .82fr) minmax(0, 1.18fr); align-items: start; gap: 24px; margin-bottom: 16px; }
+  .recap-toolbar .recap-matchup-picker { width: 100%; margin: 0; }
+}
 .recap-picker-label { display: block; margin: 0 0 6px 2px; color: #828c79; font: 10px 'DM Mono'; letter-spacing: .7px; }
 .recap-picker-trigger { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 58px; padding: 8px 11px; border: 1px solid #e2e7dd; border-radius: 9px; background: #fbfcf9; color: #465441; text-align: left; transition: border-color .15s, box-shadow .15s, background .15s; }
 .recap-picker-trigger:hover, .recap-picker-trigger[aria-expanded="true"] { border-color: color-mix(in srgb, var(--team-primary) 42%, #dfe4d9); background: #fff; }
@@ -587,6 +597,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .recap-player-emphasis { color: #46583d; font-weight: 600; }
 .recap-stat-emphasis { display: inline; margin: 0 .08em; padding: .08em .3em; border: 1px solid color-mix(in srgb, var(--team-accent) 38%, white); border-radius: 4px; color: var(--team-deep); background: color-mix(in srgb, var(--team-primary) 12%, white); font: .88em 'DM Mono'; line-height: inherit; white-space: normal; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .recap-empty { display: grid; justify-items: center; gap: 9px; padding: 26px 12px 20px; color: #829077; text-align: center; }
+.recap-generation-status { display: flex; align-items: center; gap: 9px; margin: 12px 0 4px; padding: 9px 11px; border: 1px solid #e5e9e1; border-radius: 7px; color: #687363; background: #f7f8f4; font-size: 12px; }
+.recap-generation-status > svg { flex: 0 0 auto; color: var(--team-primary); }
+.recap-generation-track { flex: 0 0 68px; height: 3px; overflow: hidden; border-radius: 99px; background: color-mix(in srgb, var(--team-primary) 14%, #fff); }
+.recap-generation-track span { display: block; width: 45%; height: 100%; border-radius: inherit; background: var(--team-primary); animation: recap-progress 1.35s ease-in-out infinite; }
 .recap-empty-icon { display: grid; min-height: 24px; place-items: center; color: var(--team-primary); }
 .recap-empty-generating p { animation: recap-status-in .28s ease both; color: var(--team-deep); }
 .recap-progress-track { width: min(220px, 70%); height: 3px; overflow: hidden; border-radius: 99px; background: color-mix(in srgb, var(--team-primary) 14%, #fff); }
@@ -605,6 +619,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 [data-theme="dark"] .recap-team-story h4 span { color: #b9c9ae; }
 [data-theme="dark"] .recap-team-story p, [data-theme="dark"] .recap-bench-note p, [data-theme="dark"] .recap-punchline { color: #b2bbaa; }
 [data-theme="dark"] .recap-fallback { border-color: #3b4539; background: #252d24; }
+[data-theme="dark"] .recap-generation-status { border-color: #3b4539; color: #d0d8c9; background: #252d24; }
 [data-theme="dark"] .recap-fallback > span { color: #bcc9b2; }
 [data-theme="dark"] .recap-fallback p { color: #d0d8c9; }
 [data-theme="dark"] .recap-bench-note { border-color: color-mix(in srgb, var(--team-accent) 45%, #202820); background: color-mix(in srgb, var(--team-primary) 20%, #202820); }
@@ -654,6 +669,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .standings-page-panel .standing-row { min-height: 62px; }
 .standings-page-panel .standing-team strong, .standings-page-panel .record, .standings-page-panel .points-for { font-size: 13px; }
 @media (max-width: 700px) {
+  .recap-toolbar .panel-heading > div { position: relative; width: 100%; padding-right: 64px; }
+  .recap-toolbar .recap-saved-tag { position: absolute; top: 0; right: 0; margin-top: 0; }
   .recap-matchup-picker { width: 100%; margin: 12px 0 14px; }
   .recap-picker-trigger { min-height: 58px; }
   .recap-card { padding: 12px; }
@@ -747,6 +764,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tally-week h3 { box-sizing: border-box; width: 100%; min-height: 27px; display: flex; align-items: center; gap: 8px; margin: 2px 0 0; padding: 0 8px 0 9px; border-left: 3px solid var(--team-primary); border-radius: 4px; background: color-mix(in srgb, var(--team-primary) 8%, white); color: #414d3c; font: 600 12px 'DM Mono', monospace; }
 .tally-week:nth-child(even) h3 { border-left-color: var(--team-accent); background: color-mix(in srgb, var(--team-accent) 13%, white); }
 .tally-week h3 span { color: #969e91; font: 12px 'DM Sans', sans-serif; }
+.tally-week h3 .tally-week-progress { margin-left: auto; padding: 2px 6px; border-radius: 4px; background: #f8efd7; color: #8f6c26; font: 600 10px 'DM Mono', monospace; letter-spacing: .35px; }
 .tally-chevron, .week-history-chevron { flex: 0 0 auto; color: #9ba294; transition: transform .18s; }
 .award-tally-card[open] .tally-chevron, .week-history-card[open] .week-history-chevron { transform: rotate(180deg); }
 .tally-recipients { border-top: 1px solid #edf0ea; padding: 4px 12px 8px; }
@@ -803,6 +821,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 [data-theme="dark"] .tally-week h3 { color: #e2e8dd; background: color-mix(in srgb, var(--team-primary) 18%, #1b211b); }
 [data-theme="dark"] .tally-week:nth-child(even) h3 { background: color-mix(in srgb, var(--team-accent) 16%, #1b211b); }
 [data-theme="dark"] .tally-week h3 span { color: #a0aa99; }
+[data-theme="dark"] .tally-week h3 .tally-week-progress { background: #3a3220; color: #efd18a; }
 [data-theme="dark"] .tally-recipient { border-color: #2a3329; }
 [data-theme="dark"] .tally-player-emphasis { color: #d6e2cb; }
 [data-theme="dark"] .award-bench-comparisons { color: #b5c0ae; }

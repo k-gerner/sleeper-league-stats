@@ -70,6 +70,17 @@ function points(total, decimal = 0) {
   return Number(total || 0) + Number(decimal || 0) / 100
 }
 
+function isAfterWeekFinalCutoff(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', hourCycle: 'h23',
+  }).formatToParts(date)
+  const clock = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
+  // The next NFL slate begins Thursday, so Thursday through Monday belongs to
+  // a live week. Tuesday at 1 a.m. through Wednesday is the final interval.
+  return clock.weekday === 'Wed' ||
+    (clock.weekday === 'Tue' && Number(clock.hour) >= 1)
+}
+
 function playerName(id, players) {
   if (players[id]?.full_name) return players[id].full_name
   if (players[id]?.first_name || players[id]?.last_name) return [players[id].first_name, players[id].last_name].filter(Boolean).join(' ')
@@ -105,6 +116,7 @@ function pointsLeftOnBench(row, team, week, currentWeek, players) {
       id,
       name: playerName(id, players),
       position: players[id]?.fantasy_positions?.[0] || players[id]?.position || (/^[A-Z]{2,4}$/.test(id) ? 'DEF' : ''),
+      team: players[id]?.team || (/^[A-Z]{2,4}$/.test(id) ? id : null),
       points: Number(score) || 0,
     }))
     .filter((player) => player.points > 0)
@@ -255,7 +267,13 @@ export async function fetchLeagueDashboard(signal) {
   ])
 
   const currentWeek = Math.max(1, Number(nflState.display_week || nflState.week || league.settings?.leg || 1))
-  const lastCompletedWeek = Number(league.settings?.last_scored_leg || Math.max(0, currentWeek - 1))
+  const sleeperLastCompletedWeek = Number(league.settings?.last_scored_leg || Math.max(0, currentWeek - 1))
+  // Sleeper can advance last_scored_leg while games in the displayed week are
+  // still underway. Keep that week live until Tuesday at 1 a.m. Eastern.
+  const currentWeekIsLive = !isAfterWeekFinalCutoff()
+  const lastCompletedWeek = currentWeekIsLive
+    ? Math.min(sleeperLastCompletedWeek, currentWeek - 1)
+    : Math.max(sleeperLastCompletedWeek, currentWeek)
   const teamUsers = new Map(users.map((user) => [String(user.user_id), user]))
   const rosterPositions = league.roster_positions || []
   const teams = rosters.map((roster) => ({ ...makeTeam(roster, teamUsers.get(String(roster.owner_id))), rosterPositions }))
@@ -263,7 +281,9 @@ export async function fetchLeagueDashboard(signal) {
   const weeks = await Promise.all(Array.from({ length: currentWeek }, async (_, index) => {
     const week = index + 1
     const rows = await getJson(`/league/${LEAGUE_ID}/matchups/${week}`, signal)
-    return [week, makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek, players)]
+    const data = makeWeek(rows, teamsById, week, currentWeek, lastCompletedWeek, players)
+    data.isLive = week === currentWeek ? currentWeekIsLive : week > lastCompletedWeek
+    return [week, data]
   }))
 
   const standings = teams.map((team) => ({
@@ -281,7 +301,11 @@ export async function fetchLeagueDashboard(signal) {
     lastCompletedWeek,
     standings,
     weeks: Object.fromEntries(weeks),
-    trend: weeks.map(([week, data]) => ({ week: `W${week}`, points: Number(data.highScore?.points || 0), average: data.average })),
+    // Only completed weeks belong in the season scoring trend. The current
+    // week can have partial matchup scores before Sleeper marks it complete.
+    trend: weeks
+      .filter(([week]) => week <= lastCompletedWeek)
+      .map(([week, data]) => ({ week: `W${week}`, points: Number(data.highScore?.points || 0), average: data.average })),
   }
 }
 
@@ -295,13 +319,16 @@ export async function fetchNflWeekStatuses(season, week, signal) {
   if (!response.ok) throw new Error(`NFL schedule returned ${response.status}`)
   const scoreboard = await response.json()
   const statuses = {}
+  const teamAliases = { WSH: 'WAS', JAC: 'JAX', LA: 'LAR' }
   for (const event of scoreboard.events || []) {
-    const status = event.status?.type?.state
+    const eventType = event.status?.type
+    // A postponed/suspended game must not count as finished or as a bye.
+    const status = eventType?.completed ? 'post' : ['pre', 'in'].includes(eventType?.state) ? eventType.state : 'unknown'
     for (const competitor of event.competitions?.[0]?.competitors || []) {
       const team = competitor.team?.abbreviation
-      if (team && status) statuses[team] = status
+      if (team) statuses[teamAliases[team] || team] = status
     }
   }
-  return statuses
+  return Object.keys(statuses).length ? statuses : null
 }
 

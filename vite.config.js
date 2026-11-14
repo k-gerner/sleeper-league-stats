@@ -2,60 +2,33 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { loadEnv } from 'vite'
-import { generateRecap, generateWeekCopy } from './server/generateRecap.js'
+import { generateSharedRecaps, generateSharedBanner } from './server/sharedContent.js'
 
-function recapDevEndpoint(env) {
+function apiDevEndpoints(env) {
   return {
-    name: 'recap-dev-endpoint',
+    name: 'shared-content-dev-endpoints',
     configureServer(server) {
-      server.middlewares.use('/api/generate-recap', async (req, res) => {
+      const endpoints = [
+        ['/api/generate-recap', generateSharedRecaps, 'Use POST to generate a recap.'],
+        ['/api/generate-week-copy', generateSharedBanner, 'Use POST to generate weekly copy.'],
+      ]
+      for (const [path, generate, methodError] of endpoints) server.middlewares.use(path, async (req, res) => {
         if (req.method !== 'POST') {
           res.statusCode = 405
-          res.end(JSON.stringify({ error: 'Use POST to generate a recap.' }))
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify({ error: methodError }))
           return
         }
         try {
           let raw = ''
           for await (const chunk of req) raw += chunk
-          const recaps = await generateRecap(JSON.parse(raw || '{}'), {
-            apiKey: env.OPENAI_API_KEY,
-            model: env.OPENAI_MODEL,
-          })
+          const result = await generate(JSON.parse(raw || '{}'), { ...process.env, ...env })
           res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({ recaps }))
+          res.end(JSON.stringify(result))
         } catch (error) {
           res.statusCode = 500
           res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({ error: error.message || 'Recap generation failed.' }))
-        }
-      })
-    },
-  }
-}
-
-function weekCopyDevEndpoint(env) {
-  return {
-    name: 'week-copy-dev-endpoint',
-    configureServer(server) {
-      server.middlewares.use('/api/generate-week-copy', async (req, res) => {
-        if (req.method !== 'POST') {
-          res.statusCode = 405
-          res.end(JSON.stringify({ error: 'Use POST to generate weekly copy.' }))
-          return
-        }
-        try {
-          let raw = ''
-          for await (const chunk of req) raw += chunk
-          const copy = await generateWeekCopy(JSON.parse(raw || '{}'), {
-            apiKey: env.OPENAI_API_KEY,
-            model: env.OPENAI_MODEL,
-          })
-          res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({ copy }))
-        } catch (error) {
-          res.statusCode = 500
-          res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({ error: error.message || 'Weekly copy generation failed.' }))
+          res.end(JSON.stringify({ error: error.message || 'Generation failed.' }))
         }
       })
     },
@@ -63,5 +36,5 @@ function weekCopyDevEndpoint(env) {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), recapDevEndpoint(loadEnv(mode, process.cwd(), '')), weekCopyDevEndpoint(loadEnv(mode, process.cwd(), ''))],
+  plugins: [react(), tailwindcss(), apiDevEndpoints(loadEnv(mode, process.cwd(), ''))],
 }))

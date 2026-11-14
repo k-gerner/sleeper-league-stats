@@ -9,6 +9,8 @@ import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { fetchLeagueDashboard, fetchNflWeekStatuses, formatPoints } from './sleeperData.js'
+import { requestSharedContent } from './sharedContentClient.js'
+import { loadRecapMatchups } from './recapData.js'
 
 const teamThemes = [
   { code: 'ARI', name: 'Arizona Cardinals', primary: '#97233f', accent: '#ffb612' },
@@ -561,22 +563,23 @@ function buildAwardArchive(leagueData) {
   const weeklyHistory = Object.entries(leagueData.weeks)
     .map(([weekNumber, weekData]) => ({ week: Number(weekNumber), weekData, awards: buildAwards(weekData) }))
     .sort((a, b) => b.week - a.week)
-  const etWeekday = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date())
-  const currentWeekAwardsFinal = ['Tue', 'Wed', 'Thu', 'Fri', 'Sat'].includes(etWeekday)
-  const countedWeeks = weeklyHistory.filter(({ week }) => week < leagueData.currentWeek || (week === leagueData.currentWeek && currentWeekAwardsFinal))
+  const countedWeeks = weeklyHistory.filter(({ weekData }) => !weekData.isLive)
+  const countedWeekNumbers = new Set(countedWeeks.map(({ week }) => week))
 
-  for (const week of countedWeeks) {
+  for (const week of weeklyHistory) {
     for (const award of week.awards) {
       const recipients = new Set(award.teamIds.map((teamId) => String(teamsById.get(teamId)?.managerId || teamId)))
       for (const personId of recipients) {
         const person = people.get(personId)
         if (!person) continue
-        person.total += 1
-        countsByAward.get(award.key)?.set(personId, (countsByAward.get(award.key)?.get(personId) || 0) + 1)
+        if (countedWeekNumbers.has(week.week)) {
+          person.total += 1
+          countsByAward.get(award.key)?.set(personId, (countsByAward.get(award.key)?.get(personId) || 0) + 1)
+        }
         const teamIds = new Set(award.teamIds.filter((teamId) => String(teamsById.get(teamId)?.managerId || teamId) === personId))
         const recipientDetails = (award.recipientDetails || []).filter((recipient) => teamIds.has(recipient.teamId) && recipient.result)
         const teamName = [...teamIds].map((teamId) => teamsById.get(teamId)?.name).filter(Boolean).join(' + ') || award.teamName
-        eventsByAward.get(award.key)?.get(personId)?.push({ week: week.week, detail: award.detail, teamName, playerName: award.playerName, playerPoints: award.playerPoints, playerShare: award.playerShare, benchComparisons: award.benchComparisons, benchGap: award.benchGap, shootoutTotal: award.shootoutTotal, recipientDetails })
+        eventsByAward.get(award.key)?.get(personId)?.push({ week: week.week, isLive: week.weekData.isLive, detail: award.detail, teamName, playerName: award.playerName, playerPoints: award.playerPoints, playerShare: award.playerShare, benchComparisons: award.benchComparisons, benchGap: award.benchGap, shootoutTotal: award.shootoutTotal, recipientDetails })
       }
     }
   }
@@ -596,6 +599,7 @@ function buildAwardArchive(leagueData) {
           personId: person.id,
           name: person.name,
           count: person.count,
+          isLive: event.isLive,
           teamName: event.teamName,
           detail: event.detail,
           playerName: event.playerName,
@@ -674,7 +678,7 @@ function AwardsPage({ leagueData, focusAwardKey, onFocusAwardHandled }) {
       return <article className="season-record-card" key={record.title}><span className="record-card-icon">{record.icon}</span><span className="record-card-title">{record.title}</span><strong>{record.format(record.result)}</strong><span className="record-card-holder">{who}</span>{record.result.teamName && <span className="record-card-team">{record.result.teamName}</span>}<small>Week {record.result.week}</small></article>
     })}</div></section>
 
-    <section className="award-tallies-section"><div className="award-section-heading"><div><div className="section-kicker">EVERY CATEGORY, EVERY RECIPIENT</div><h2>Award tallies</h2></div><p>Open an award to see its weekly recipients, team names, and win details.</p></div><div className="award-tally-grid">{archive.tallies.filter((award) => award.total > 0).map((award) => <details className="award-tally-card" id={`award-tally-${award.key}`} key={award.key}><summary><span className="tally-award-emoji">{award.icon}</span><span className="tally-award-main"><strong>{award.title}</strong><small>{award.description}</small></span><b className="tally-award-total">{award.total}<small> wins</small></b><ChevronDown size={16} className="tally-chevron" /></summary><div className="tally-recipients">{award.weeks.map(({ week, recipients }) => <section className="tally-week" key={week}><h3>Week {week}{recipients[0]?.shootoutTotal && <span className="tally-week-total">Combined total <b className="recap-stat-emphasis">{recipients[0].shootoutTotal}</b> points</span>}</h3>{recipients.map((recipient) => <div className="tally-recipient" key={`${week}-${recipient.personId}`}><div className="tally-recipient-info"><strong>{recipient.teamName}</strong><small>{recipient.name}</small>{recipient.shootoutTotal ? <ShootoutTeamScores teamScores={recipient.recipientDetails} compact /> : <ul className="tally-recipient-events"><li>{recipient.recipientDetails?.length ? `${recipient.recipientDetails.map(({ result }) => `(${result})`).join(', ')} · ` : ''}<TallyAwardDetail detail={recipient.detail} playerName={recipient.playerName} playerPoints={recipient.playerPoints} playerShare={recipient.playerShare} /></li></ul>}<BenchComparisonList comparisons={recipient.benchComparisons} /></div></div>)}</section>)}</div></details>)}</div></section>
+    <section className="award-tallies-section"><div className="award-section-heading"><div><div className="section-kicker">EVERY CATEGORY, EVERY RECIPIENT</div><h2>Award tallies</h2></div><p>{leagueData.weeks[leagueData.currentWeek]?.isLive ? `Week ${leagueData.currentWeek} is in progress. Current recipients are provisional and are not included in season totals.` : 'Open an award to see its weekly recipients, team names, and win details.'}</p></div><div className="award-tally-grid">{archive.tallies.filter((award) => award.total > 0 || award.weeks.some(({ recipients }) => recipients.some((recipient) => recipient.isLive))).map((award) => <details className="award-tally-card" id={`award-tally-${award.key}`} key={award.key}><summary><span className="tally-award-emoji">{award.icon}</span><span className="tally-award-main"><strong>{award.title}</strong><small>{award.description}</small></span><b className="tally-award-total">{award.total}<small> wins</small></b><ChevronDown size={16} className="tally-chevron" /></summary><div className="tally-recipients">{award.weeks.map(({ week, recipients }) => <section className="tally-week" key={week}><h3>Week {week}{recipients.some((recipient) => recipient.isLive) && <span className="tally-week-progress">IN PROGRESS</span>}{recipients[0]?.shootoutTotal && <span className="tally-week-total">Combined total <b className="recap-stat-emphasis">{recipients[0].shootoutTotal}</b> points</span>}</h3>{recipients.map((recipient) => <div className="tally-recipient" key={`${week}-${recipient.personId}`}><div className="tally-recipient-info"><strong>{recipient.teamName}</strong><small>{recipient.name}</small>{recipient.shootoutTotal ? <ShootoutTeamScores teamScores={recipient.recipientDetails} compact /> : <ul className="tally-recipient-events"><li>{recipient.recipientDetails?.length ? `${recipient.recipientDetails.map(({ result }) => `(${result})`).join(', ')} · ` : ''}<TallyAwardDetail detail={recipient.detail} playerName={recipient.playerName} playerPoints={recipient.playerPoints} playerShare={recipient.playerShare} /></li></ul>}<BenchComparisonList comparisons={recipient.benchComparisons} /></div></div>)}</section>)}</div></details>)}</div></section>
 
     <section className="week-history-section"><div className="award-section-heading"><div><div className="section-kicker">THE WEEKLY HARDWARE</div><h2>Current &amp; past awards</h2></div><p>Live-week awards may change as Sleeper updates scores.</p></div><div className="week-history-list">{archive.weeks.map(({ week, weekData, awards }) => <details className="week-history-card" open={week === leagueData.currentWeek} key={week}><summary><span className="week-history-number">WEEK {String(week).padStart(2, '0')}</span><span className={`week-history-status ${weekData.isLive ? 'history-status-live' : ''}`}>{weekData.isLive ? 'LIVE' : 'FINAL'}</span><span className="week-history-count">{awards.length} awards</span><ChevronDown size={17} className="week-history-chevron" /></summary><div className="week-history-awards">{awards.map((award) => <AwardHistoryItem key={`${week}-${award.key}`} award={award} />)}{awards.length === 0 && <div className="week-no-awards">No matchup awards available for this week yet.</div>}</div></details>)}</div></section>
     <p className="award-method-note">Awards are calculated from Sleeper matchup and player scores. Current-week totals are provisional until scoring is final.</p>
@@ -688,12 +692,14 @@ function App() {
   const [confirmRegenerate, setConfirmRegenerate] = useState(null)
   const confirmRegenerateButton = useRef(null)
   const [savedRecap, setSavedRecap] = useState(null)
-  const autoFinalizedRecapKey = useRef(null)
+  const recapRequestInFlight = useRef(null)
   const [selectedRecapIndex, setSelectedRecapIndex] = useState(0)
   const [bannerCopy, setBannerCopy] = useState(null)
   const [loadingBannerCopy, setLoadingBannerCopy] = useState(false)
+  const [bannerCopyError, setBannerCopyError] = useState('')
   const [recapError, setRecapError] = useState('')
   const [generatingRecap, setGeneratingRecap] = useState(false)
+  const [recapGenerationLabel, setRecapGenerationLabel] = useState('')
   const [recapProgressStep, setRecapProgressStep] = useState(0)
   const [selectedWeek, setSelectedWeek] = useState(null)
   const [leagueData, setLeagueData] = useState(null)
@@ -751,41 +757,34 @@ function App() {
   const currentBannerCopy = bannerCopy?.key === (leagueData && week ? `sunday-club-banner-copy-${leagueData.league.id}-${leagueData.league.season}-${week}-${bannerCopyStatus}` : null) ? bannerCopy : null
   const awards = buildAwards(weekData)
   const recapStorageKey = leagueData && week ? `sunday-club-recap-${leagueData.league.id}-${leagueData.league.season}-${week}` : null
+  const currentRecapKey = useRef(recapStorageKey)
+  currentRecapKey.current = recapStorageKey
   useEffect(() => {
     if (!generatingRecap) { setRecapProgressStep(0); return }
     const timer = window.setInterval(() => setRecapProgressStep((step) => (step + 1) % 3), 2200)
     return () => window.clearInterval(timer)
   }, [generatingRecap])
   const bannerCopyStorageKey = leagueData && week ? `sunday-club-banner-copy-${leagueData.league.id}-${leagueData.league.season}-${week}-${bannerCopyStatus}` : null
+  const currentBannerKey = useRef(bannerCopyStorageKey)
+  currentBannerKey.current = bannerCopyStorageKey
   useEffect(() => {
-    if (!bannerCopyStorageKey || !weekData) return
+    if (!bannerCopyStorageKey || !weekData?.highScore) return
     let activeRequest = true
-    const loadOrGenerateCopy = async () => {
-      setBannerCopy(null)
-      let cachedCopy = null
-      try { cachedCopy = JSON.parse(localStorage.getItem(bannerCopyStorageKey) || 'null') } catch { cachedCopy = null }
-      if (cachedCopy?.headline && cachedCopy?.subtitle) {
-        setBannerCopy({ key: bannerCopyStorageKey, ...cachedCopy })
-        setLoadingBannerCopy(false)
-        return
-      }
-      if (!weekData.highScore) {
-        setLoadingBannerCopy(false)
-        return
-      }
+    const loadSharedCopy = async () => {
       setLoadingBannerCopy(true)
+      setBannerCopyError('')
       try {
-        const response = await fetch('/api/generate-week-copy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ season: leagueData.league.season, week, highScore: weekData.highScore, closest: weekData.closest }),
-        })
-        const body = await response.json()
-        if (!response.ok) throw new Error(body.error || 'Weekly copy generation failed.')
-        if (!activeRequest) return
-        const copy = body.copy
-        try { localStorage.setItem(bannerCopyStorageKey, JSON.stringify(copy)) } catch { /* Keep generated copy available for this session if storage is unavailable. */ }
-        setBannerCopy({ key: bannerCopyStorageKey, ...copy })
+        const body = await requestSharedContent('/api/generate-week-copy', {
+          leagueId: leagueData.league.id,
+          season: leagueData.league.season,
+          week,
+          isCurrentWeek: week === leagueData.currentWeek,
+          isFinal: !weekData.isLive,
+          highScore: weekData.highScore,
+          closest: weekData.closest,
+        }, { isActive: () => activeRequest })
+        if (!body || !activeRequest) return
+        if (body.copy?.headline && body.copy?.subtitle) setBannerCopy({ key: bannerCopyStorageKey, ...body.copy })
       } catch {
         if (!activeRequest) return
         const fallback = {
@@ -797,15 +796,75 @@ function App() {
         if (activeRequest) setLoadingBannerCopy(false)
       }
     }
-    loadOrGenerateCopy()
+    loadSharedCopy()
     return () => { activeRequest = false }
   }, [bannerCopyStorageKey, weekData, leagueData?.league?.season, week])
+  const regenerateBannerCopy = async () => {
+    if (!bannerCopyStorageKey || !weekData?.highScore || loadingBannerCopy) return
+    setLoadingBannerCopy(true)
+    setBannerCopyError('')
+    const isActive = () => currentBannerKey.current === bannerCopyStorageKey
+    try {
+      const body = await requestSharedContent('/api/generate-week-copy', {
+        leagueId: leagueData.league.id,
+        season: leagueData.league.season,
+        week,
+        isCurrentWeek: week === leagueData.currentWeek,
+        isFinal: !weekData.isLive,
+        highScore: weekData.highScore,
+        closest: weekData.closest,
+        manual: true,
+      }, { isActive })
+      if (!body) return
+      if (body.copy?.headline && body.copy?.subtitle) {
+        setBannerCopy({ key: bannerCopyStorageKey, ...body.copy })
+      }
+      if (!body.copy?.headline || !body.copy?.subtitle) {
+        throw new Error(body.error || 'The server returned no banner copy.')
+      }
+    } catch (error) {
+      if (isActive()) setBannerCopyError(error.message || 'Banner copy could not be refreshed.')
+    } finally {
+      if (isActive()) setLoadingBannerCopy(false)
+    }
+  }
   useEffect(() => {
     if (!recapStorageKey) return
     setSelectedRecapIndex(0)
-    try { setSavedRecap(JSON.parse(localStorage.getItem(recapStorageKey) || 'null')) } catch { setSavedRecap(null) }
+    setSavedRecap(null)
     setRecapError('')
   }, [recapStorageKey])
+  useEffect(() => {
+    if (!recapStorageKey || !weekData?.matchups?.length || recapRequestInFlight.current?.key === recapStorageKey) return
+    let activeRequest = true
+    const request = { key: recapStorageKey }
+    const loadSharedRecaps = async () => {
+      recapRequestInFlight.current = request
+      setGeneratingRecap(true)
+      setRecapGenerationLabel('Loading the saved matchup recaps…')
+      try {
+        const matchups = await loadRecapMatchups(weekData, leagueData.league.season, week)
+        const body = await requestSharedContent('/api/generate-recap', {
+          leagueId: leagueData.league.id, season: leagueData.league.season, week,
+          isCurrentWeek: week === leagueData.currentWeek, isFinal: !weekData.isLive,
+          automatic: true, matchups, sourceMatchups: matchups,
+          matchupKeys: weekData.matchups.map(recapMatchupKey),
+        }, { isActive: () => activeRequest, onWaiting: () => setRecapGenerationLabel('Waiting for the saved recap generation to finish…') })
+        if (!body || !activeRequest) return
+        setSavedRecap({ generatedAt: body.generatedAt, isFinal: body.isFinal, recaps: body.recaps || [] })
+      } catch (error) {
+        if (activeRequest) setRecapError(error.message || 'Recaps could not be loaded. Check your connection and try again.')
+      } finally {
+        if (recapRequestInFlight.current === request) recapRequestInFlight.current = null
+        if (activeRequest) { setGeneratingRecap(false); setRecapGenerationLabel('') }
+      }
+    }
+    loadSharedRecaps()
+    return () => {
+      activeRequest = false
+      if (recapRequestInFlight.current === request) recapRequestInFlight.current = null
+    }
+  }, [recapStorageKey, weekData, leagueData?.league?.id, leagueData?.league?.season, leagueData?.currentWeek, week])
   useEffect(() => {
     if (!confirmRegenerate) return
     confirmRegenerateButton.current?.focus()
@@ -814,38 +873,35 @@ function App() {
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [confirmRegenerate])
   const generateRecap = async ({ targetIndex = null, confirmed = false } = {}) => {
-    if (generatingRecap || !weekData?.matchups?.length) return
+    if (generatingRecap || recapRequestInFlight.current?.key === recapStorageKey || !weekData?.matchups?.length) return
     if (savedRecap && !confirmed) { setConfirmRegenerate({ targetIndex }); return }
     setConfirmRegenerate(null)
+    const request = { key: recapStorageKey }
+    recapRequestInFlight.current = request
+    const isActive = () => currentRecapKey.current === request.key && recapRequestInFlight.current === request
     setGeneratingRecap(true)
+    setRecapGenerationLabel(targetIndex === null ? 'Generating all matchup recaps…' : 'Regenerating this matchup…')
     setRecapError('')
     try {
-      const allMatchups = weekData.matchups.map(({ home, away, margin }) => ({
-        home: { name: home.team.name, manager: home.team.manager, score: home.points, starters: [...home.starters].sort((a, b) => b.points - a.points).map(({ name, position, points }) => ({ name, position, points })), bench: (home.benchPlayers || []).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), eligibleBenchUpgrades: home.eligibleBenchUpgrades || [] },
-        away: { name: away.team.name, manager: away.team.manager, score: away.points, starters: [...away.starters].sort((a, b) => b.points - a.points).map(({ name, position, points }) => ({ name, position, points })), bench: (away.benchPlayers || []).slice(0, 4).map(({ name, position, points }) => ({ name, position, points })), eligibleBenchUpgrades: away.eligibleBenchUpgrades || [] },
-        margin,
-      }))
+      const allMatchups = await loadRecapMatchups(weekData, leagueData.league.season, week)
       const matchups = targetIndex === null ? allMatchups : [allMatchups[targetIndex]]
-      const response = await fetch('/api/generate-recap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ season: leagueData.league.season, week, matchups }) })
-      const body = await response.json()
-      if (!response.ok) throw new Error(body.error || 'Recap generation failed.')
-      const recaps = targetIndex === null
-        ? body.recaps.map((recap, index) => ({ ...recap, matchupKey: recapMatchupKey(weekData.matchups[index]) }))
-        : (savedRecap?.recaps || []).map((recap, index) => index === targetIndex ? { ...body.recaps[0], matchupKey: recapMatchupKey(weekData.matchups[index]) } : recap)
-      const result = { generatedAt: new Date().toISOString(), isFinal: !weekData.isLive, recaps }
+      const matchupKeys = targetIndex === null ? weekData.matchups.map(recapMatchupKey) : [recapMatchupKey(weekData.matchups[targetIndex])]
+      const body = await requestSharedContent('/api/generate-recap', {
+        leagueId: leagueData.league.id, season: leagueData.league.season, week,
+        isCurrentWeek: week === leagueData.currentWeek, isFinal: !weekData.isLive,
+        manual: true, matchups, sourceMatchups: allMatchups, matchupKeys,
+      }, { isActive, onWaiting: () => setRecapGenerationLabel(targetIndex === null ? 'Another request is generating the weekly recaps…' : 'Another request is generating this matchup…') })
+      if (!body) return
+      const result = { generatedAt: body.generatedAt, isFinal: body.isFinal, recaps: body.recaps || [] }
       setSavedRecap(result)
-      if (recapStorageKey) localStorage.setItem(recapStorageKey, JSON.stringify(result))
       if (!savedRecap) document.getElementById('weekly-recap')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     } catch (error) {
-      setRecapError(error.message || 'Recap generation failed. Check your connection and try again.')
-    } finally { setGeneratingRecap(false) }
+      if (isActive()) setRecapError(error.message || 'Recap generation failed. Check your connection and try again.')
+    } finally {
+      if (isActive()) { setGeneratingRecap(false); setRecapGenerationLabel('') }
+      if (recapRequestInFlight.current === request) recapRequestInFlight.current = null
+    }
   }
-  useEffect(() => {
-    if (!savedRecap?.recaps?.length || weekData?.isLive || savedRecap.isFinal === true || !recapStorageKey || generatingRecap) return
-    if (autoFinalizedRecapKey.current === recapStorageKey) return
-    autoFinalizedRecapKey.current = recapStorageKey
-    generateRecap({ confirmed: true })
-  }, [savedRecap, weekData?.isLive, recapStorageKey, generatingRecap])
   return <div className="app-shell" data-theme={darkMode ? 'dark' : 'light'} style={{ '--team-primary': favoriteTeam.primary, '--team-accent': favoriteTeam.accent }}>
     <Sidebar active={active} setActive={setActive} open={menuOpen} onClose={() => setMenuOpen(false)} favoriteTeam={favoriteTeam} onFavoriteTeamChange={changeFavoriteTeam} league={leagueData?.league} darkMode={darkMode} onToggleDarkMode={toggleDarkMode} />
     <main className="main-area">
@@ -854,11 +910,12 @@ function App() {
       {loadError && !leagueData && <div className="api-state api-error"><strong>Couldn’t load this league</strong><span>{loadError}</span><button className="generate-button" onClick={() => setRefreshAttempt((value) => value + 1)}><RefreshCw size={15} /> Try again</button></div>}
       {leagueData && weekData && (active === 'Awards & records' ? <AwardsPage leagueData={leagueData} focusAwardKey={focusAwardKey} onFocusAwardHandled={() => setFocusAwardKey(null)} /> : active === 'Matchups' ? <MatchupsPage leagueData={leagueData} week={week} weekData={weekData} onWeekChange={setSelectedWeek} /> : active === 'Standings' ? <StandingsPage leagueData={leagueData} /> : <div className="page-content">
         <div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line" /> {leagueData.league.season} SEASON <span className="eyebrow-sun">✳</span> WEEK {week}</div><h1>Week {week}, in focus <span className="wave">✦</span></h1><p className="welcome-subtitle">{weekData.isLive ? 'Live scores are rolling in across the league.' : 'The league has entered its “every point matters” era.'}</p></div><WeekPicker weeks={leagueData.weeks} week={week} currentWeek={leagueData.currentWeek} lastCompletedWeek={leagueData.lastCompletedWeek} onChange={setSelectedWeek} /></div>
-        <section className="featured-banner"><div className="banner-grain" /><div className="banner-content"><div className="live-label"><span /> WEEK {week} {weekData.isLive ? 'LIVE' : 'RECAP'} <span className="label-separator">/</span> {weekData.isLive ? 'IN PROGRESS' : 'FINAL'}</div><h2>{currentBannerCopy?.headline || (loadingBannerCopy ? 'Writing this week’s headline…' : 'The week is taking shape.')}</h2><p aria-live="polite">{currentBannerCopy?.subtitle || (loadingBannerCopy ? 'Pulling together the biggest score and closest finish.' : 'Matchup scores are not available for this week yet.')}</p><button className="banner-button" onClick={() => document.getElementById('weekly-recap')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Read this week’s recap <ArrowRight size={15} /></button></div><div className="banner-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="banner-ball">🏈</div><div className="art-star star-one">✳</div><div className="art-star star-two">✦</div><div className="art-score"><span>WEEK HIGH</span><strong>{weekData.highScore ? formatPoints(weekData.highScore.points) : '—'}</strong><small>PTS</small></div><div className="banner-sticker">{weekData.isLive ? 'LIVE\nSCORES' : 'WEEK\nWINNER'}</div></div><div className="banner-index">{String(week).padStart(2, '0')} <span>—</span> {String(leagueData.currentWeek).padStart(2, '0')}</div></section>
+        <section className="featured-banner"><div className="banner-grain" /><div className="banner-content"><div className="live-label"><span /> WEEK {week} {weekData.isLive ? 'LIVE' : 'RECAP'} <span className="label-separator">/</span> {weekData.isLive ? 'IN PROGRESS' : 'FINAL'}</div><h2>{currentBannerCopy?.headline || (loadingBannerCopy ? 'Writing this week’s headline…' : 'The week is taking shape.')}</h2><p aria-live="polite">{currentBannerCopy?.subtitle || (loadingBannerCopy ? 'Pulling together the biggest score and closest finish.' : 'Matchup scores are not available for this week yet.')}</p><div className="banner-actions"><button className="banner-button" onClick={() => document.getElementById('weekly-recap')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Read this week’s recap <ArrowRight size={15} /></button><button className="banner-button banner-refresh-button" onClick={regenerateBannerCopy} disabled={loadingBannerCopy || !weekData.highScore} aria-label="Regenerate banner headline and summary"><RefreshCw size={14} className={loadingBannerCopy ? 'loading-spinner' : ''} />{loadingBannerCopy ? 'Refreshing…' : 'Refresh banner'}</button></div>{bannerCopyError && <span className="banner-copy-error" role="alert">{bannerCopyError}</span>}</div><div className="banner-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="banner-ball">🏈</div><div className="art-star star-one">✳</div><div className="art-star star-two">✦</div><div className="art-score"><span>WEEK HIGH</span><strong>{weekData.highScore ? formatPoints(weekData.highScore.points) : '—'}</strong><small>PTS</small></div><div className="banner-sticker">{weekData.isLive ? 'LIVE\nSCORES' : 'WEEK\nWINNER'}</div></div><div className="banner-index">{String(week).padStart(2, '0')} <span>—</span> {String(leagueData.currentWeek).padStart(2, '0')}</div></section>
 
-        <section className="weekly-recap panel" id="weekly-recap">
-          <div className="panel-heading"><div><div className="section-kicker">THE SUNDAY EDITION</div><h3>Week {week} matchup recaps</h3></div>{savedRecap && <span className="saved-tag">SAVED</span>}</div>
-          {weekData.matchups.length > 0 && <RecapMatchupPicker matchups={weekData.matchups} selectedIndex={selectedRecapIndex} week={week} onSelect={setSelectedRecapIndex} />}
+        <section className="weekly-recap panel" id="weekly-recap" aria-busy={generatingRecap}>
+          <div className="recap-toolbar"><div className="panel-heading"><div><div className="section-kicker">THE SUNDAY EDITION</div><h3>Week {week} matchup recaps</h3>{savedRecap?.recaps?.length > 0 && <span className="saved-tag recap-saved-tag">SAVED</span>}</div></div>
+          {weekData.matchups.length > 0 && <RecapMatchupPicker matchups={weekData.matchups} selectedIndex={selectedRecapIndex} week={week} onSelect={setSelectedRecapIndex} />}</div>
+          {generatingRecap && savedRecap?.recaps?.length > 0 && <div className="recap-generation-status" role="status" aria-live="polite"><LoaderCircle size={15} className="loading-spinner" /><span>{recapGenerationLabel || 'Generating matchup recaps…'}</span><div className="recap-generation-track" aria-hidden="true"><span /></div></div>}
           {recapError && <p className="recap-error" role="alert">{recapError}</p>}
           {savedRecap?.recaps?.length ? <div className="recap-list">{savedRecap.recaps.map((recap, index) => { const matchupIndex = recap.matchupKey ? weekData.matchups.findIndex((item) => recapMatchupKey(item) === recap.matchupKey) : index; if (matchupIndex !== selectedRecapIndex) return null; const matchup = weekData.matchups[matchupIndex]; if (!matchup) return null; const hasLegacyCopy = hasRecapText(recap.segments) || (typeof recap.text === 'string' && recap.text.trim()); return <article className="recap-card" key={`${matchup.home.team.name}-${matchup.away.team.name}-${index}`}><div className="recap-card-heading"><strong>{matchup.home.team.name}</strong><span>{formatPoints(matchup.home.points)} <i>—</i> {formatPoints(matchup.away.points)}</span><strong>{matchup.away.team.name}</strong></div>{isCompleteStructuredRecap(recap) ? <><div className="recap-result"><RecapSegments segments={recap.result} /></div><div className="recap-team-stories"><section className="recap-team-story"><h4>{matchup.home.team.name}<span>{formatPoints(matchup.home.points)}</span></h4><p><RecapSegments segments={recap.homeStory} /></p></section><section className="recap-team-story"><h4>{matchup.away.team.name}<span>{formatPoints(matchup.away.points)}</span></h4><p><RecapSegments segments={recap.awayStory} /></p></section></div>{isVerifiedBenchNote(recap.benchNote, matchup) && <aside className="recap-bench-note"><span>BENCH REGRET</span><p><RecapSegments segments={recap.benchNote} /></p></aside>}<p className="recap-punchline"><Sparkles size={13} /><span className="recap-punchline-text"><RecapSegments segments={recap.punchline} /></span></p></> : hasLegacyCopy ? <RecapCopy recap={recap} /> : <RecapFallback matchup={matchup} isLive={weekData.isLive} />}<button className="recap-retry-button" onClick={() => generateRecap({ targetIndex: index })} disabled={generatingRecap} aria-label={`Regenerate recap for ${matchup.home.team.name} vs ${matchup.away.team.name}`}><RefreshCw size={13} /><span>{generatingRecap ? 'Generating…' : 'Regenerate'}</span></button></article> })}</div> : <div className={`recap-empty ${generatingRecap ? 'recap-empty-generating' : ''}`} aria-live="polite" aria-busy={generatingRecap}><div className="recap-empty-icon">{generatingRecap ? <LoaderCircle size={22} className="loading-spinner" /> : <Sparkles size={19} />}</div><p key={generatingRecap ? `progress-${recapProgressStep}` : 'idle'}>{weekData.matchups.length ? (generatingRecap ? ['Reading the box scores…', 'Finding the week’s biggest moments…', 'Writing the matchup stories…'][recapProgressStep] : 'Generate a witty, stats-rich recap for every matchup this week.') : 'Recaps will be available when matchups have scoring data.'}</p>{generatingRecap && <div className="recap-progress-track" aria-hidden="true"><span /></div>}<button className="generate-button" onClick={() => generateRecap()} disabled={generatingRecap || !weekData.matchups.length}><Sparkles size={14} />{generatingRecap ? 'Generating…' : 'Generate recap'}</button></div>}
         </section>
@@ -870,7 +927,7 @@ function App() {
             <section className="panel trend-panel"><div className="panel-heading"><div><div className="section-kicker">THE BIG PICTURE</div><h3>Scoring trends</h3></div><span className="select-pill">{leagueData.league.season} season</span></div><div className="trend-summary"><strong>Team high score</strong><span><i /> Average score by week</span></div><TrendChart darkMode={darkMode} data={leagueData.trend} average={weekData.average} /><div className="chart-footer"><span><span className="legend-dot green-dot" /> Team high</span><span><span className="legend-dash" /> League average</span><span className="trend-footnote">{leagueData.trend.length} weeks</span></div></section>
           </div>
           <div className="right-column">
-            <section className="panel awards-panel"><div className="panel-heading"><div><div className="section-kicker">THE HARDWARE</div><h3>Week {week} awards <span className="award-count">{String(awards.length).padStart(2, '0')}</span></h3></div></div><div className="award-list">{awards.slice(0, 4).map((award, index) => <AwardCard award={award} featured={index === 0} key={award.title} onClick={(key) => { setFocusAwardKey(key); setActive('Awards & records') }} />)}</div><button className="standings-link" onClick={() => setActive('Awards & records')}>All awards &amp; records <ArrowRight size={14} /></button><div className="awards-foot"><Sparkles size={14} /><span>Calculated from Sleeper matchup scores.</span></div></section>
+            <section className="panel awards-panel"><div className="panel-heading"><div><div className="section-kicker">THE HARDWARE</div><h3>Week {week} awards</h3></div><span className={`week-history-status ${weekData.isLive ? 'history-status-live' : ''}`}>{weekData.isLive ? 'LIVE' : 'FINAL'}</span></div><div className="award-list">{awards.slice(0, 4).map((award, index) => <AwardCard award={award} featured={index === 0} key={award.title} onClick={(key) => { setFocusAwardKey(key); setActive('Awards & records') }} />)}</div><button className="standings-link" onClick={() => setActive('Awards & records')}>All awards &amp; records <ArrowRight size={14} /></button><div className="awards-foot"><Sparkles size={14} /><span>Calculated from Sleeper matchup scores.</span></div></section>
           </div>
         </div>
         <footer className="page-footer"><span>{leagueData.league.name} <span className="footer-dot">·</span> Season {leagueData.league.season}</span><span>Live stats from Sleeper <span className="footer-heart">♥</span></span></footer>
