@@ -170,10 +170,12 @@ function canAutoGenerate(row, sourceHash, isFinal, now) {
   return now.getTime() - new Date(row.generated_at).getTime() >= AUTO_COOLDOWN_MS
 }
 
-function mergeRecaps(existing, generated, matchupKeys) {
-  const byKey = new Map((existing || []).map((recap) => [recap.matchupKey, recap]))
+function mergeRecaps(existing, generated, matchupKeys, generatedAt, previousGeneratedAt) {
+  const byKey = new Map((existing || []).map((recap) => [recap.matchupKey, {
+    ...recap, generatedAt: recap.generatedAt || previousGeneratedAt || null,
+  }]))
   generated.forEach((recap, index) => byKey.set(matchupKeys[index] || recap.matchupKey, {
-    ...recap, matchupKey: matchupKeys[index] || recap.matchupKey,
+    ...recap, matchupKey: matchupKeys[index] || recap.matchupKey, generatedAt,
   }))
   return [...byKey.values()]
 }
@@ -209,9 +211,10 @@ export async function generateSharedRecaps(body, env) {
   try {
     const generated = await generateRecap({ season, week, matchups, isFinal }, { apiKey: env.OPENAI_API_KEY, model: env.OPENAI_MODEL })
     const matchupKeys = body.matchupKeys || []
-    const recaps = mergeRecaps(claim.row.payload?.recaps, generated.map((recap) => ({ ...recap, progressVersion: RECAP_PROGRESS_VERSION })), matchupKeys)
+    const generatedAt = new Date().toISOString()
+    const recaps = mergeRecaps(claim.row.payload?.recaps, generated.map((recap) => ({ ...recap, progressVersion: RECAP_PROGRESS_VERSION })), matchupKeys, generatedAt, claim.row.generated_at)
     const updated = await finishClaim(env, key, claim.token, {
-      payload: { recaps }, source_hash: sourceHash, generated_at: new Date().toISOString(), is_final: isFinal,
+      payload: { recaps }, source_hash: sourceHash, generated_at: generatedAt, is_final: isFinal,
     })
     return { recaps, generatedAt: updated.generated_at, isFinal: Boolean(updated.is_final), cached: false }
   } catch (error) {
