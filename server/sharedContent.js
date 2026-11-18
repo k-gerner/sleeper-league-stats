@@ -228,7 +228,7 @@ export async function generateSharedBanner(body, env) {
   const week = Number(body.week)
   if (!Number.isInteger(season) || !Number.isInteger(week) || !body.highScore) throw new Error('Season, week, and a weekly high score are required.')
   const key = { league_id: String(body.leagueId || LEAGUE_ID), season, week, content_type: 'banner', item_key: 'banner' }
-  const sourceHash = fingerprint({ bannerCopyVersion: 2, highScore: body.highScore, closest: body.closest || null })
+  const sourceHash = fingerprint({ bannerCopyVersion: 3, highScore: body.highScore, closest: body.closest || null })
   const now = new Date()
   let row = await readContent(env, key)
   const isFinal = finalForRequest(body, now)
