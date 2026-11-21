@@ -971,14 +971,25 @@ function App() {
       setRecapGenerationLabel('Loading the saved matchup recaps…')
       try {
         const matchups = await loadRecapMatchups(weekData, leagueData.league.season, week)
-        const body = await requestSharedContent('/api/generate-recap', {
-          leagueId: leagueData.league.id, season: leagueData.league.season, week,
-          isCurrentWeek: week === leagueData.currentWeek, isFinal: !weekData.isLive,
-          automatic: true, matchups, sourceMatchups: matchups,
-          matchupKeys: weekData.matchups.map(recapMatchupKey),
-        }, { isActive: () => activeRequest, onWaiting: () => setRecapGenerationLabel('Waiting for the saved recap generation to finish…') })
-        if (!body || !activeRequest) return
-        setSavedRecap({ generatedAt: body.generatedAt, isFinal: body.isFinal, recaps: body.recaps || [] })
+        let forceRemainingMatchups = false
+        for (let index = 0; index < matchups.length; index += 1) {
+          if (!activeRequest) return
+          const matchupName = `${weekData.matchups[index].home.team.name} vs ${weekData.matchups[index].away.team.name}`
+          setRecapGenerationLabel(`Generating recap for ${matchupName} (${index + 1} of ${matchups.length})…`)
+          const body = await requestSharedContent('/api/generate-recap', {
+            leagueId: leagueData.league.id, season: leagueData.league.season, week,
+            isCurrentWeek: week === leagueData.currentWeek, isFinal: !weekData.isLive,
+            automatic: true, manual: forceRemainingMatchups,
+            matchups: [matchups[index]], sourceMatchups: matchups,
+            matchupKeys: [recapMatchupKey(weekData.matchups[index])],
+          }, {
+            isActive: () => activeRequest,
+            onWaiting: () => setRecapGenerationLabel(`Recap for ${matchupName} is still being generated…`),
+          })
+          if (!body || !activeRequest) return
+          if (!body.cached) forceRemainingMatchups = true
+          setSavedRecap({ generatedAt: body.generatedAt, isFinal: body.isFinal, recaps: body.recaps || [] })
+        }
       } catch (error) {
         if (activeRequest) setRecapError(error.message || 'Recaps could not be loaded. Check your connection and try again.')
       } finally {
@@ -1007,20 +1018,30 @@ function App() {
     recapRequestInFlight.current = request
     const isActive = () => currentRecapKey.current === request.key && recapRequestInFlight.current === request
     setGeneratingRecap(true)
-    setRecapGenerationLabel(targetIndex === null ? 'Generating all matchup recaps…' : 'Regenerating this matchup…')
+    setRecapGenerationLabel(targetIndex === null ? 'Preparing matchup recaps…' : 'Regenerating this matchup…')
     setRecapError('')
     try {
       const allMatchups = await loadRecapMatchups(weekData, leagueData.league.season, week)
-      const matchups = targetIndex === null ? allMatchups : [allMatchups[targetIndex]]
-      const matchupKeys = targetIndex === null ? weekData.matchups.map(recapMatchupKey) : [recapMatchupKey(weekData.matchups[targetIndex])]
-      const body = await requestSharedContent('/api/generate-recap', {
-        leagueId: leagueData.league.id, season: leagueData.league.season, week,
-        isCurrentWeek: week === leagueData.currentWeek, isFinal: !weekData.isLive,
-        manual: true, matchups, sourceMatchups: allMatchups, matchupKeys,
-      }, { isActive, onWaiting: () => setRecapGenerationLabel(targetIndex === null ? 'Another request is generating the weekly recaps…' : 'Another request is generating this matchup…') })
-      if (!body) return
-      const result = { generatedAt: body.generatedAt, isFinal: body.isFinal, recaps: body.recaps || [] }
-      setSavedRecap(result)
+      const indices = targetIndex === null ? allMatchups.map((_, index) => index) : [targetIndex]
+      for (let position = 0; position < indices.length; position += 1) {
+        if (!isActive()) return
+        const index = indices[position]
+        const matchupName = `${weekData.matchups[index].home.team.name} vs ${weekData.matchups[index].away.team.name}`
+        setRecapGenerationLabel(targetIndex === null
+          ? `Generating recap for ${matchupName} (${position + 1} of ${indices.length})…`
+          : `Regenerating recap for ${matchupName}…`)
+        const body = await requestSharedContent('/api/generate-recap', {
+          leagueId: leagueData.league.id, season: leagueData.league.season, week,
+          isCurrentWeek: week === leagueData.currentWeek, isFinal: !weekData.isLive,
+          manual: true, matchups: [allMatchups[index]], sourceMatchups: allMatchups,
+          matchupKeys: [recapMatchupKey(weekData.matchups[index])],
+        }, {
+          isActive,
+          onWaiting: () => setRecapGenerationLabel(`Recap for ${matchupName} is still being generated…`),
+        })
+        if (!body) return
+        setSavedRecap({ generatedAt: body.generatedAt, isFinal: body.isFinal, recaps: body.recaps || [] })
+      }
       if (!savedRecap) document.getElementById('weekly-recap')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     } catch (error) {
       if (isActive()) setRecapError(error.message || 'Recap generation failed. Check your connection and try again.')
@@ -1029,6 +1050,12 @@ function App() {
       if (recapRequestInFlight.current === request) recapRequestInFlight.current = null
     }
   }
+  const selectedRecapAvailable = savedRecap?.recaps?.some((recap, index) => {
+    const matchupIndex = recap.matchupKey
+      ? (weekData?.matchups?.findIndex((item) => recapMatchupKey(item) === recap.matchupKey) ?? -1)
+      : index
+    return matchupIndex === selectedRecapIndex
+  })
   return <div className="app-shell" data-theme={darkMode ? 'dark' : 'light'} style={{ '--team-primary': favoriteTeam.primary, '--team-accent': favoriteTeam.accent }}>
     <Sidebar active={active} setActive={setActive} open={menuOpen} onClose={() => setMenuOpen(false)} favoriteTeam={favoriteTeam} onFavoriteTeamChange={changeFavoriteTeam} league={leagueData?.league} darkMode={darkMode} onToggleDarkMode={toggleDarkMode} />
     <main className="main-area">
@@ -1044,7 +1071,7 @@ function App() {
           {weekData.matchups.length > 0 && <RecapMatchupPicker matchups={weekData.matchups} selectedIndex={selectedRecapIndex} week={week} onSelect={setSelectedRecapIndex} />}</div>
           {generatingRecap && savedRecap?.recaps?.length > 0 && <div className="recap-generation-status" role="status" aria-live="polite"><LoaderCircle size={15} className="loading-spinner" /><span>{recapGenerationLabel || 'Generating matchup recaps…'}</span><div className="recap-generation-track" aria-hidden="true"><span /></div></div>}
           {recapError && <p className="recap-error" role="alert">{recapError}</p>}
-          {savedRecap?.recaps?.length ? <div className="recap-list">{savedRecap.recaps.map((recap, index) => { const matchupIndex = recap.matchupKey ? weekData.matchups.findIndex((item) => recapMatchupKey(item) === recap.matchupKey) : index; if (matchupIndex !== selectedRecapIndex) return null; const matchup = weekData.matchups[matchupIndex]; if (!matchup) return null; const hasLegacyCopy = hasRecapText(recap.segments) || (typeof recap.text === 'string' && recap.text.trim()); const generatedAt = recap.generatedAt || savedRecap.generatedAt; const generatedLabel = formatRecapGeneratedAt(generatedAt); return <article className="recap-card" key={`${matchup.home.team.name}-${matchup.away.team.name}-${index}`}><div className="recap-card-heading"><strong>{matchup.home.team.name}</strong><span>{formatPoints(matchup.home.points)} <i>—</i> {formatPoints(matchup.away.points)}</span><strong>{matchup.away.team.name}</strong></div>{isCompleteStructuredRecap(recap) ? <><div className="recap-result"><RecapSegments segments={recap.result} /></div><div className="recap-team-stories"><section className="recap-team-story"><h4>{matchup.home.team.name}<span>{formatPoints(matchup.home.points)}</span></h4><p><RecapSegments segments={recap.homeStory} /></p></section><section className="recap-team-story"><h4>{matchup.away.team.name}<span>{formatPoints(matchup.away.points)}</span></h4><p><RecapSegments segments={recap.awayStory} /></p></section></div>{isVerifiedBenchNote(recap.benchNote, matchup) && <aside className="recap-bench-note"><span>BENCH REGRET</span><p><RecapSegments segments={recap.benchNote} /></p></aside>}<p className="recap-punchline"><Sparkles size={13} /><span className="recap-punchline-text"><RecapSegments segments={recap.punchline} /></span></p></> : hasLegacyCopy ? <RecapCopy recap={recap} /> : <RecapFallback matchup={matchup} isLive={weekData.isLive} />}<div className="recap-card-actions"><button className="recap-retry-button" onClick={() => generateRecap({ targetIndex: matchupIndex })} disabled={generatingRecap} aria-label={`Regenerate recap for ${matchup.home.team.name} vs ${matchup.away.team.name}`}><RefreshCw size={13} /><span>{generatingRecap ? 'Generating…' : 'Regenerate'}</span></button>{generatedLabel && <time className="recap-generated-at" dateTime={generatedAt}>Last generated {generatedLabel}</time>}</div></article> })}</div> : <div className={`recap-empty ${generatingRecap ? 'recap-empty-generating' : ''}`} aria-live="polite" aria-busy={generatingRecap}><div className="recap-empty-icon">{generatingRecap ? <LoaderCircle size={22} className="loading-spinner" /> : <Sparkles size={19} />}</div><p key={generatingRecap ? `progress-${recapProgressStep}` : 'idle'}>{weekData.matchups.length ? (generatingRecap ? ['Reading the box scores…', 'Finding the week’s biggest moments…', 'Writing the matchup stories…'][recapProgressStep] : 'Generate a witty, stats-rich recap for every matchup this week.') : 'Recaps will be available when matchups have scoring data.'}</p>{generatingRecap && <div className="recap-progress-track" aria-hidden="true"><span /></div>}<button className="generate-button" onClick={() => generateRecap()} disabled={generatingRecap || !weekData.matchups.length}><Sparkles size={14} />{generatingRecap ? 'Generating…' : 'Generate recap'}</button></div>}
+          {savedRecap?.recaps?.length ? <div className="recap-list">{savedRecap.recaps.map((recap, index) => { const matchupIndex = recap.matchupKey ? weekData.matchups.findIndex((item) => recapMatchupKey(item) === recap.matchupKey) : index; if (matchupIndex !== selectedRecapIndex) return null; const matchup = weekData.matchups[matchupIndex]; if (!matchup) return null; const hasLegacyCopy = hasRecapText(recap.segments) || (typeof recap.text === 'string' && recap.text.trim()); const generatedAt = recap.generatedAt || savedRecap.generatedAt; const generatedLabel = formatRecapGeneratedAt(generatedAt); return <article className="recap-card" key={`${matchup.home.team.name}-${matchup.away.team.name}-${index}`}><div className="recap-card-heading"><strong>{matchup.home.team.name}</strong><span>{formatPoints(matchup.home.points)} <i>—</i> {formatPoints(matchup.away.points)}</span><strong>{matchup.away.team.name}</strong></div>{isCompleteStructuredRecap(recap) ? <><div className="recap-result"><RecapSegments segments={recap.result} /></div><div className="recap-team-stories"><section className="recap-team-story"><h4>{matchup.home.team.name}<span>{formatPoints(matchup.home.points)}</span></h4><p><RecapSegments segments={recap.homeStory} /></p></section><section className="recap-team-story"><h4>{matchup.away.team.name}<span>{formatPoints(matchup.away.points)}</span></h4><p><RecapSegments segments={recap.awayStory} /></p></section></div>{isVerifiedBenchNote(recap.benchNote, matchup) && <aside className="recap-bench-note"><span>BENCH REGRET</span><p><RecapSegments segments={recap.benchNote} /></p></aside>}<p className="recap-punchline"><Sparkles size={13} /><span className="recap-punchline-text"><RecapSegments segments={recap.punchline} /></span></p></> : hasLegacyCopy ? <RecapCopy recap={recap} /> : <RecapFallback matchup={matchup} isLive={weekData.isLive} />}<div className="recap-card-actions"><button className="recap-retry-button" onClick={() => generateRecap({ targetIndex: matchupIndex })} disabled={generatingRecap} aria-label={`Regenerate recap for ${matchup.home.team.name} vs ${matchup.away.team.name}`}><RefreshCw size={13} /><span>{generatingRecap ? 'Generating…' : 'Regenerate'}</span></button>{generatedLabel && <time className="recap-generated-at" dateTime={generatedAt}>Last generated {generatedLabel}</time>}</div></article> })}{!selectedRecapAvailable && <div className="recap-empty recap-matchup-pending" role="status"><div className="recap-empty-icon">{generatingRecap ? <LoaderCircle size={22} className="loading-spinner" /> : <Sparkles size={19} />}</div><p>{generatingRecap ? 'Recap for this matchup is still being generated…' : 'No recap is available for this matchup yet.'}</p>{!generatingRecap && <button className="recap-retry-button" onClick={() => generateRecap({ targetIndex: selectedRecapIndex })} aria-label="Generate recap for this matchup"><RefreshCw size={13} /><span>Generate recap for this matchup</span></button>}</div>}</div> : <div className={`recap-empty ${generatingRecap ? 'recap-empty-generating' : ''}`} aria-live="polite" aria-busy={generatingRecap}><div className="recap-empty-icon">{generatingRecap ? <LoaderCircle size={22} className="loading-spinner" /> : <Sparkles size={19} />}</div><p key={generatingRecap ? `progress-${recapProgressStep}` : 'idle'}>{weekData.matchups.length ? (generatingRecap ? ['Reading the box scores…', 'Finding the week’s biggest moments…', 'Writing the matchup stories…'][recapProgressStep] : 'Generate a witty, stats-rich recap for every matchup this week.') : 'Recaps will be available when matchups have scoring data.'}</p>{generatingRecap && <div className="recap-progress-track" aria-hidden="true"><span /></div>}<button className="generate-button" onClick={() => generateRecap()} disabled={generatingRecap || !weekData.matchups.length}><Sparkles size={14} />{generatingRecap ? 'Generating…' : 'Generate recap'}</button></div>}
         </section>
 
         <section className="stats-grid" aria-label="League highlights"><StatCard icon={Trophy} label="Weekly high score" value={weekData.highScore ? formatPoints(weekData.highScore.points) : '—'} note={weekData.highScore?.team.name || 'No scores yet'} /><StatCard icon={Flame} label="Closest matchup" value={weekData.closest ? `${formatPoints(weekData.closest.margin)} pts` : '—'} note={weekData.closest?.winner.team.name || 'No matchup yet'} /><StatCard icon={Gauge} label="League average points" value={formatPoints(weekData.average)} note={`${leagueData.league.teamCount} teams this week`} /><StatCard icon={Shield} label="Highest scoring player" value={weekData.highestScoringPlayer ? `${formatPoints(weekData.highestScoringPlayer.points)} pts` : '—'} note={weekData.highestScoringPlayer ? `${weekData.highestScoringPlayer.name} · ${weekData.highestScoringPlayer.team.name}` : 'No player scores yet'} /></section>

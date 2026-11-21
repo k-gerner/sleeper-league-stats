@@ -604,6 +604,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .recap-empty { display: grid; justify-items: center; gap: 9px; padding: 26px 12px 20px; color: #829077; text-align: center; }
 .recap-generation-status { display: flex; align-items: center; gap: 9px; margin: 12px 0 4px; padding: 9px 11px; border: 1px solid #e5e9e1; border-radius: 7px; color: #687363; background: #f7f8f4; font-size: 12px; }
 .recap-generation-status > svg { flex: 0 0 auto; color: var(--team-primary); }
+.recap-generation-status > span { flex: 1 1 auto; min-width: 0; }
 .recap-generation-track { flex: 0 0 68px; height: 3px; overflow: hidden; border-radius: 99px; background: color-mix(in srgb, var(--team-primary) 14%, #fff); }
 .recap-generation-track span { display: block; width: 45%; height: 100%; border-radius: inherit; background: var(--team-primary); animation: recap-progress 1.35s ease-in-out infinite; }
 .recap-empty-icon { display: grid; min-height: 24px; place-items: center; color: var(--team-primary); }
