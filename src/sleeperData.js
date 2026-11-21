@@ -296,7 +296,7 @@ export async function fetchLeagueDashboard(signal) {
   })).sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.pointsFor - a.pointsFor)
 
   return {
-    league: { id: LEAGUE_ID, name: league.name, season: league.season, teamCount: league.total_rosters, status: league.status },
+    league: { id: LEAGUE_ID, name: league.name, season: league.season, teamCount: league.total_rosters, status: league.status, playoffWeekStart: Number(league.settings?.playoff_week_start) || null },
     currentWeek,
     lastCompletedWeek,
     standings,

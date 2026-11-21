@@ -1,5 +1,7 @@
 # Sunday Club — Sleeper League Dashboard
 
+Hosted at: [sunday-roast-seven.vercel.app](https://sunday-roast-seven.vercel.app/)
+
 A React + Tailwind dashboard for the Sleeper league **All Roads Lead to Odunze** (`1389752419247747072`). It loads league data from Sleeper's public API and uses OpenAI to generate witty, stats-based recaps of each weekly matchup and featured weekly banner copy. Recaps and banner copy are shared across visitors through Supabase; the dashboard data itself is still fetched from Sleeper by each browser.
 
 The sidebar's styled **Your Team Colors** picker lets you search all 32 NFL teams and previews their palettes with color swatches. The chosen team is stored as `sunday-club-favorite-team` in browser `localStorage`, so the preference stays on that device/browser without an account or backend. The header's light/dark toggle is also saved in browser storage, and the chosen team accents carry through both themes.

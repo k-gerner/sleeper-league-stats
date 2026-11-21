@@ -1,13 +1,10 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3, Check,
-  CalendarDays, ChevronDown, ChevronRight, Flame, Gauge,
+  CalendarDays, ChevronDown, ChevronRight, CircleHelp, Flame, Gauge,
   LayoutDashboard, LoaderCircle, Menu, Moon, Search, Shield, Sparkles, Sun,
   Trophy, X, RefreshCw,
 } from 'lucide-react'
-import {
-  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
 import { fetchLeagueDashboard, fetchNflWeekStatuses, formatPoints } from './sleeperData.js'
 import { requestSharedContent } from './sharedContentClient.js'
 import { loadRecapMatchups } from './recapData.js'
@@ -230,7 +227,7 @@ function Header({ onMenu, darkMode, onToggleDarkMode, favoriteTeam, onFavoriteTe
 }
 
 function StatCard({ icon: Icon, label, value, note, noteTone, spark }) {
-  return <article className="stat-card"><div className="stat-top"><span className="stat-icon"><Icon size={17} /></span><span className={`stat-note ${noteTone || ''}`}>{noteTone === 'positive' ? <ArrowUpRight size={13} /> : noteTone === 'negative' ? <ArrowDownRight size={13} /> : null}{note}</span></div><div className="stat-value">{value}</div><div className="stat-label">{label}</div>{spark && <svg className="sparkline" viewBox="0 0 120 32" preserveAspectRatio="none"><path d={spark} /></svg>}</article>
+  return <article className="stat-card"><div className="stat-top"><span className="stat-icon"><Icon size={17} /></span><span className="stat-label stat-title">{label}</span></div><div className="stat-value">{value}</div><div className={`stat-note ${noteTone || ''}`}>{noteTone && <span className="stat-note-indicator">{noteTone === 'positive' ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}</span>}<span className="stat-note-text">{note}</span></div>{spark && <svg className="sparkline" viewBox="0 0 120 32" preserveAspectRatio="none"><path d={spark} /></svg>}</article>
 }
 
 function cleanRecapDecimals(text) {
@@ -382,18 +379,141 @@ function RecapMatchupPicker({ matchups, selectedIndex, week, onSelect }) {
   </div>
 }
 
-function TrendChart({ darkMode, data, average }) {
-  const gridColor = darkMode ? '#343c34' : '#e9ebe6'
-  const tickColor = darkMode ? '#a1aa9f' : '#a0a59d'
-  return <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data} margin={{ top: 10, right: 6, left: -26, bottom: 0 }}>
-    <defs><linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--team-primary)" stopOpacity={0.2} /><stop offset="100%" stopColor="var(--team-primary)" stopOpacity={0.01} /></linearGradient></defs>
-    <CartesianGrid vertical={false} stroke={gridColor} strokeDasharray="3 5" />
-    <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fill: tickColor, fontSize: 11, fontFamily: 'DM Mono' }} dy={10} />
-    <YAxis axisLine={false} tickLine={false} ticks={[80, 110, 140, 170]} tick={{ fill: tickColor, fontSize: 10, fontFamily: 'DM Mono' }} />
-    <Tooltip contentStyle={{ background: darkMode ? '#202720' : '#fff', color: darkMode ? '#e6ebe3' : '#20251f', borderRadius: 12, border: `1px solid ${darkMode ? '#3b443a' : '#e8eae4'}`, boxShadow: '0 8px 28px #19241412', fontSize: 12 }} labelStyle={{ color: darkMode ? '#e8ede4' : '#394435', fontWeight: 600 }} itemStyle={{ color: darkMode ? '#e8ede4' : '#394435' }} formatter={(value, name) => [`${formatPoints(value)} pts`, name === 'points' ? 'Team high' : 'League average']} />
-    <Area type="monotone" dataKey="points" stroke="var(--team-primary)" strokeWidth={2.5} fill="url(#trendFill)" activeDot={{ r: 5, fill: 'var(--team-primary)', stroke: darkMode ? '#202720' : '#fff', strokeWidth: 2 }} />
-    <Area type="monotone" dataKey="average" stroke="#aeb7a5" strokeWidth={1.5} strokeDasharray="4 4" fill="none" activeDot={false} />
-  </AreaChart></ResponsiveContainer><div className="chart-average"><span className="average-line" /> Week avg <b>{formatPoints(average)}</b></div></div>
+function buildSeasonInsightRows(leagueData) {
+  const byRoster = new Map((leagueData.standings || []).map((team) => [String(team.id), {
+    id: String(team.id), name: team.name, points: 0, wins: 0, allPlayWins: 0, weeks: 0,
+  }]))
+  const regularSeasonLastWeek = leagueData.league.playoffWeekStart
+    ? Math.min(leagueData.lastCompletedWeek, leagueData.league.playoffWeekStart - 1)
+    : leagueData.lastCompletedWeek
+  const completedWeeks = Object.entries(leagueData.weeks || {})
+    .filter(([week, data]) => Number(week) <= regularSeasonLastWeek && !data.isLive)
+    .sort(([a], [b]) => Number(a) - Number(b))
+
+  for (const [, data] of completedWeeks) {
+    const scoredTeams = (data.teams || []).filter((team) => byRoster.has(String(team.rosterId)))
+    for (const team of scoredTeams) {
+      const row = byRoster.get(String(team.rosterId))
+      row.points += Number(team.points) || 0
+      row.weeks += 1
+      for (const opponent of scoredTeams) {
+        if (opponent.rosterId === team.rosterId) continue
+        const difference = (Number(team.points) || 0) - (Number(opponent.points) || 0)
+        row.allPlayWins += difference > 0 ? 1 : difference === 0 ? 0.5 : 0
+      }
+    }
+    for (const matchup of data.matchups || []) {
+      const home = byRoster.get(String(matchup.home.rosterId))
+      const away = byRoster.get(String(matchup.away.rosterId))
+      if (!home || !away) continue
+      const difference = (Number(matchup.home.points) || 0) - (Number(matchup.away.points) || 0)
+      if (difference > 0) home.wins += 1
+      else if (difference < 0) away.wins += 1
+      else { home.wins += 0.5; away.wins += 0.5 }
+    }
+  }
+
+  const opponentCount = Math.max(1, byRoster.size - 1)
+  return [...byRoster.values()].map((team) => ({
+    ...team,
+    scheduleNeutralWins: team.allPlayWins / opponentCount,
+    scheduleImpact: team.wins - team.allPlayWins / opponentCount,
+  })).filter((team) => team.weeks > 0)
+}
+
+function SeasonAnalysis({ leagueData, darkMode }) {
+  const [selectedId, setSelectedId] = useState(null)
+  const [scheduleHelpOpen, setScheduleHelpOpen] = useState(false)
+  const baseRows = buildSeasonInsightRows(leagueData)
+  const averagePoints = baseRows.length ? baseRows.reduce((total, team) => total + team.points, 0) / baseRows.length : 0
+  const averageWins = baseRows.length ? baseRows.reduce((total, team) => total + team.wins, 0) / baseRows.length : 0
+  const rows = baseRows
+  const selected = rows.find((team) => team.id === selectedId)
+  const pointsLeader = [...rows].sort((a, b) => b.points - a.points)[0]
+  const winsLeader = [...rows].sort((a, b) => b.wins - a.wins)[0]
+  const lowestPoints = rows.length ? Math.min(...rows.map((team) => team.points)) : 0
+  const highestPoints = Math.max(1, ...rows.map((team) => team.points))
+  const pointsRange = Math.max(1, highestPoints - lowestPoints)
+  const pointPadding = pointsRange * 0.08
+  const pointsMin = Math.max(0, Math.floor((lowestPoints - pointPadding) / 50) * 50)
+  const pointsMax = Math.ceil((highestPoints + pointPadding) / 50) * 50
+  const maxWins = Math.max(1, ...rows.map((team) => team.wins))
+  const maxImpact = Math.max(0.5, ...rows.map((team) => Math.abs(team.scheduleImpact)))
+  const teamColors = new Map(rows.map((team, index) => [team.id, `hsl(${(index * 137.5 + 156) % 360} 35% ${darkMode ? '64%' : '45%'})`]))
+  const ink = darkMode ? '#a1aa9f' : '#8e958b'
+  const grid = darkMode ? '#343c34' : '#eceee8'
+  const neutral = darkMode ? '#67776c' : '#a6afa1'
+  const chartWidth = 700
+  const chartHeight = 320
+  const plot = { left: 58, right: 16, top: 18, bottom: 42 }
+  const x = (wins) => plot.left + (wins / maxWins) * (chartWidth - plot.left - plot.right)
+  const y = (points) => chartHeight - plot.bottom - ((points - pointsMin) / Math.max(1, pointsMax - pointsMin)) * (chartHeight - plot.top - plot.bottom)
+  const plottedRows = selectedId ? [...rows].sort((a, b) => Number(a.id === selectedId) - Number(b.id === selectedId)) : rows
+  const toggleTeam = (id) => setSelectedId((current) => current === id ? null : id)
+  const formatWins = (value) => Number(value).toLocaleString('en-US', { maximumFractionDigits: 1 })
+  const weekCount = completedWeeksLabel(leagueData)
+
+  return <section className="season-analysis" aria-labelledby="season-analysis-title">
+    <div className="season-analysis-heading"><div><div className="section-kicker">THE BIG PICTURE</div><h2 id="season-analysis-title">Follow the points. Question the record.</h2><p>Standings tell one story. The scores have retained their own attorney. Select a team in either chart to inspect its season.</p></div><span className="select-pill">WEEKS 1–{weekCount} · FINAL SCORES</span></div>
+    <div className="season-chart-grid">
+      <section className="panel season-chart-card">
+        <div className="season-chart-title"><div><h3>Production vs. results</h3><p>More wins to the right. More points toward the top.</p></div><span className="select-pill">{rows.length} TEAMS</span></div>
+        <div className="season-scatter-scroll"><svg className="season-scatter" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label="Scatter plot with season wins on the horizontal axis and points scored on the vertical axis">
+          {[0, .25, .5, .75, 1].map((fraction) => {
+            const gy = chartHeight - plot.bottom - fraction * (chartHeight - plot.top - plot.bottom)
+            const gx = plot.left + fraction * (chartWidth - plot.left - plot.right)
+            return <g key={fraction}><line x1={plot.left} x2={chartWidth - plot.right} y1={gy} y2={gy} stroke={grid} /><line x1={gx} x2={gx} y1={plot.top} y2={chartHeight - plot.bottom} stroke={grid} />
+              <text x={plot.left - 9} y={gy + 4} textAnchor="end" fill={ink} className="season-axis-tick">{Math.round((pointsMin + (pointsMax - pointsMin) * fraction) / 50) * 50}</text>
+              <text x={gx} y={chartHeight - 17} textAnchor="middle" fill={ink} className="season-axis-tick">{formatWins(maxWins * fraction)}</text></g>
+          })}
+          <line x1={x(averageWins)} x2={x(averageWins)} y1={plot.top} y2={chartHeight - plot.bottom} stroke={neutral} strokeDasharray="4 5" />
+          <line x1={plot.left} x2={chartWidth - plot.right} y1={y(averagePoints)} y2={y(averagePoints)} stroke={neutral} strokeDasharray="4 5" />
+          <text x={chartWidth - plot.right} y={chartHeight - plot.bottom - 7} textAnchor="end" fill={ink} className="season-axis-caption">WINS OUTPACING SCORING</text>
+          {plottedRows.map((team) => {
+            const cx = x(team.wins)
+            const cy = y(team.points)
+            const isSelected = team.id === selectedId
+            const color = teamColors.get(team.id)
+            const labelOnRight = cx <= chartWidth * 0.78
+            const labelX = cx + (labelOnRight ? (isSelected ? 25 : 8) : (isSelected ? -25 : -8))
+            return <g key={team.id} className={`season-point ${isSelected ? 'is-selected' : ''}`} role="button" tabIndex="0" aria-label={`${team.name}: ${formatPoints(team.points)} points, ${formatWins(team.wins)} wins`} onClick={() => toggleTeam(team.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleTeam(team.id) } }}>
+              {isSelected && <circle cx={cx} cy={cy} r="17" fill="none" stroke={darkMode ? '#dce4d7' : '#45513f'} strokeWidth="2.5" />}
+              <circle cx={cx} cy={cy} r={isSelected ? 10 : 8} fill={color} stroke={darkMode ? '#202820' : '#fff'} strokeWidth="2.5" />
+              <text x={labelX} y={cy - 8} textAnchor={labelOnRight ? 'start' : 'end'} fill={isSelected ? (darkMode ? '#f0f3ed' : '#273126') : color} className="season-team-label"><tspan>{team.name}</tspan>{isSelected && <tspan x={labelX} dy="15" className="season-selected-point-value">{formatPoints(team.points)} pts</tspan>}</text>
+              <title>{team.name}: {formatPoints(team.points)} points, {formatWins(team.wins)} wins</title>
+            </g>
+          })}
+          <text x={(chartWidth + plot.left - plot.right) / 2} y={chartHeight - 1} textAnchor="middle" fill={ink} className="season-axis-label">WINS →</text>
+          <text x={14} y={(chartHeight + plot.top - plot.bottom) / 2} textAnchor="middle" fill={ink} className="season-axis-label" transform={`rotate(-90 14 ${(chartHeight + plot.top - plot.bottom) / 2})`}>SEASON POINTS SCORED →</text>
+        </svg></div>
+        <p className="season-chart-note">Dotted lines mark league averages. Each dot is a team; select a dot for exact numbers.</p>
+        {rows.length > 0 && <div className="season-snapshot" aria-label="Season snapshot"><div className="season-snapshot-heading">SEASON SNAPSHOT</div><div className="season-snapshot-grid"><div><span>POINTS LEADER</span><strong>{pointsLeader.name}</strong><small>{formatPoints(pointsLeader.points)} points</small></div><div><span>WINS LEADER</span><strong>{winsLeader.name}</strong><small>{formatWins(winsLeader.wins)} wins</small></div><div><span>LEAGUE AVERAGE</span><strong>{formatPoints(averagePoints)} pts · {formatWins(averageWins)} wins</strong><small>Across {rows.length} teams</small></div></div></div>}
+      </section>
+      <section className="panel season-chart-card schedule-card">
+        <div className="season-chart-title"><div className="schedule-chart-heading"><h3 id="schedule-chart-title">The calendar’s contribution</h3><button type="button" className="schedule-help-trigger" aria-label="Explain schedule contribution" aria-expanded={scheduleHelpOpen} aria-controls="schedule-chart-help" onClick={() => setScheduleHelpOpen((open) => !open)} onKeyDown={(event) => { if (event.key === 'Escape') setScheduleHelpOpen(false) }}><CircleHelp size={18} /></button></div></div>
+        {scheduleHelpOpen && <div className="schedule-help-popover" id="schedule-chart-help" role="note" aria-labelledby="schedule-chart-title"><button type="button" className="schedule-help-close" aria-label="Close explanation" onClick={() => setScheduleHelpOpen(false)}><X size={15} /></button><strong>What schedule impact means</strong><p>Schedule impact = actual wins minus schedule-neutral wins. Each completed week, count the teams you outscored (ties count as half a win), divide by {Math.max(1, rows.length - 1)} opponents, then add those weekly estimates. Positive means the schedule added wins; negative means it cost wins.</p></div>}
+        <div className="schedule-bars" role="group" aria-label="Schedule impact by team">
+          {[...rows].sort((a, b) => b.scheduleImpact - a.scheduleImpact).map((team) => {
+            const isSelected = team.id === selectedId
+            const positive = team.scheduleImpact >= 0
+            return <button type="button" className={`schedule-row ${isSelected ? 'is-selected' : ''}`} key={team.id} aria-pressed={isSelected} onClick={() => toggleTeam(team.id)}>
+              <span className="schedule-team-name">{team.name}</span><span className="schedule-track"><span className={`schedule-bar ${positive ? 'positive' : 'negative'}`} style={{ '--bar-width': `${Math.abs(team.scheduleImpact) / maxImpact * 50}%` }} /></span><span className="schedule-value">{team.scheduleImpact > 0 ? '+' : ''}{formatWins(team.scheduleImpact)}</span>
+            </button>
+          })}
+        </div>
+        <div className="schedule-legend"><span><i className="impact-sign drag">−</i> Schedule drag</span><span><i className="impact-sign boost">+</i> Schedule boost</span></div>
+      </section>
+      {selected && <div className="season-selected-team" role="status"><strong>{selected.name}</strong><span>{formatPoints(selected.points)} points</span><span>{formatWins(selected.wins)} actual wins</span><span>{formatWins(selected.scheduleNeutralWins)} schedule-neutral wins</span><span>{selected.scheduleImpact > 0 ? '+' : ''}{formatWins(selected.scheduleImpact)} schedule impact</span><button type="button" onClick={() => setSelectedId(null)}>Clear selection</button></div>}
+    </div>
+  </section>
+}
+
+function completedWeeksLabel(leagueData) {
+  const regularSeasonLastWeek = leagueData.league.playoffWeekStart
+    ? Math.min(leagueData.lastCompletedWeek, leagueData.league.playoffWeekStart - 1)
+    : leagueData.lastCompletedWeek
+  const completed = Object.entries(leagueData.weeks || {}).filter(([week, data]) => Number(week) <= regularSeasonLastWeek && !data.isLive).map(([week]) => Number(week))
+  return completed.length ? Math.max(...completed) : 0
 }
 
 function MatchupCard({ matchup, gameStatuses }) {
@@ -506,8 +626,8 @@ function buildAwards(weekData) {
       benchGap: formatPoints(benchPlayerLeader.topBenchUpgrade.pointDifference),
     })
   }
-  addAward('nail-biter', '😮‍💨', 'Nail-Biter', weekData.closest?.winner, weekData.closest ? `Won by ${formatPoints(weekData.closest.margin)} points` : '', 'award-lilac')
-  addAward('blowout', '💥', 'The Blowout', weekData.blowout?.winner, weekData.blowout ? WonBy(weekData.blowout.margin) : '', 'award-coral')
+  addAward('nail-biter', '😮‍💨', 'Nail-Biter', weekData.closest?.winner, weekData.closest ? WonBy(weekData.closest.margin, weekData.isLive) : '', 'award-lilac')
+  addAward('blowout', '💥', 'The Blowout', weekData.blowout?.winner, weekData.blowout ? WonBy(weekData.blowout.margin, weekData.isLive) : '', 'award-coral')
   if (weekData.oneManShow?.topStarter) {
     const share = Math.round((weekData.oneManShow.topStarter.points / weekData.oneManShow.points) * 100)
     addAward('one-man-show', '🦸', 'One-Man Show', weekData.oneManShow, `${weekData.oneManShow.topStarter.name}: ${formatPoints(weekData.oneManShow.topStarter.points)} · ${share}% of team points`, 'award-lilac', [], { playerName: weekData.oneManShow.topStarter.name, playerPoints: formatPoints(weekData.oneManShow.topStarter.points), playerShare: `${share}%` })
@@ -519,8 +639,8 @@ function buildAwards(weekData) {
   return awards
 }
 
-function WonBy(margin) {
-  return `Won by ${formatPoints(margin)} points`
+function WonBy(margin, isLive = false) {
+  return `${isLive ? 'Winning' : 'Won'} by ${formatPoints(margin)} points`
 }
 
 function TallyAwardDetail({ detail, playerName, playerPoints, playerShare }) {
@@ -927,12 +1047,10 @@ function App() {
           {savedRecap?.recaps?.length ? <div className="recap-list">{savedRecap.recaps.map((recap, index) => { const matchupIndex = recap.matchupKey ? weekData.matchups.findIndex((item) => recapMatchupKey(item) === recap.matchupKey) : index; if (matchupIndex !== selectedRecapIndex) return null; const matchup = weekData.matchups[matchupIndex]; if (!matchup) return null; const hasLegacyCopy = hasRecapText(recap.segments) || (typeof recap.text === 'string' && recap.text.trim()); const generatedAt = recap.generatedAt || savedRecap.generatedAt; const generatedLabel = formatRecapGeneratedAt(generatedAt); return <article className="recap-card" key={`${matchup.home.team.name}-${matchup.away.team.name}-${index}`}><div className="recap-card-heading"><strong>{matchup.home.team.name}</strong><span>{formatPoints(matchup.home.points)} <i>—</i> {formatPoints(matchup.away.points)}</span><strong>{matchup.away.team.name}</strong></div>{isCompleteStructuredRecap(recap) ? <><div className="recap-result"><RecapSegments segments={recap.result} /></div><div className="recap-team-stories"><section className="recap-team-story"><h4>{matchup.home.team.name}<span>{formatPoints(matchup.home.points)}</span></h4><p><RecapSegments segments={recap.homeStory} /></p></section><section className="recap-team-story"><h4>{matchup.away.team.name}<span>{formatPoints(matchup.away.points)}</span></h4><p><RecapSegments segments={recap.awayStory} /></p></section></div>{isVerifiedBenchNote(recap.benchNote, matchup) && <aside className="recap-bench-note"><span>BENCH REGRET</span><p><RecapSegments segments={recap.benchNote} /></p></aside>}<p className="recap-punchline"><Sparkles size={13} /><span className="recap-punchline-text"><RecapSegments segments={recap.punchline} /></span></p></> : hasLegacyCopy ? <RecapCopy recap={recap} /> : <RecapFallback matchup={matchup} isLive={weekData.isLive} />}<div className="recap-card-actions"><button className="recap-retry-button" onClick={() => generateRecap({ targetIndex: matchupIndex })} disabled={generatingRecap} aria-label={`Regenerate recap for ${matchup.home.team.name} vs ${matchup.away.team.name}`}><RefreshCw size={13} /><span>{generatingRecap ? 'Generating…' : 'Regenerate'}</span></button>{generatedLabel && <time className="recap-generated-at" dateTime={generatedAt}>Last generated {generatedLabel}</time>}</div></article> })}</div> : <div className={`recap-empty ${generatingRecap ? 'recap-empty-generating' : ''}`} aria-live="polite" aria-busy={generatingRecap}><div className="recap-empty-icon">{generatingRecap ? <LoaderCircle size={22} className="loading-spinner" /> : <Sparkles size={19} />}</div><p key={generatingRecap ? `progress-${recapProgressStep}` : 'idle'}>{weekData.matchups.length ? (generatingRecap ? ['Reading the box scores…', 'Finding the week’s biggest moments…', 'Writing the matchup stories…'][recapProgressStep] : 'Generate a witty, stats-rich recap for every matchup this week.') : 'Recaps will be available when matchups have scoring data.'}</p>{generatingRecap && <div className="recap-progress-track" aria-hidden="true"><span /></div>}<button className="generate-button" onClick={() => generateRecap()} disabled={generatingRecap || !weekData.matchups.length}><Sparkles size={14} />{generatingRecap ? 'Generating…' : 'Generate recap'}</button></div>}
         </section>
 
-        <section className="stats-grid" aria-label="League highlights"><StatCard icon={Trophy} label="Weekly high score" value={weekData.highScore ? formatPoints(weekData.highScore.points) : '—'} note={weekData.highScore?.team.name || 'No scores yet'} /><StatCard icon={Flame} label="Closest matchup" value={weekData.closest ? `${formatPoints(weekData.closest.margin)} pts` : '—'} note={weekData.closest?.winner.team.name || 'No matchup yet'} /><StatCard icon={Gauge} label="League average" value={formatPoints(weekData.average)} note={`${leagueData.league.teamCount} teams this week`} /><StatCard icon={Shield} label="Highest scoring player" value={weekData.highestScoringPlayer ? `${formatPoints(weekData.highestScoringPlayer.points)} pts` : '—'} note={weekData.highestScoringPlayer ? `${weekData.highestScoringPlayer.name} · ${weekData.highestScoringPlayer.team.name}` : 'No player scores yet'} /></section>
+        <section className="stats-grid" aria-label="League highlights"><StatCard icon={Trophy} label="Weekly high score" value={weekData.highScore ? formatPoints(weekData.highScore.points) : '—'} note={weekData.highScore?.team.name || 'No scores yet'} /><StatCard icon={Flame} label="Closest matchup" value={weekData.closest ? `${formatPoints(weekData.closest.margin)} pts` : '—'} note={weekData.closest?.winner.team.name || 'No matchup yet'} /><StatCard icon={Gauge} label="League average points" value={formatPoints(weekData.average)} note={`${leagueData.league.teamCount} teams this week`} /><StatCard icon={Shield} label="Highest scoring player" value={weekData.highestScoringPlayer ? `${formatPoints(weekData.highestScoringPlayer.points)} pts` : '—'} note={weekData.highestScoringPlayer ? `${weekData.highestScoringPlayer.name} · ${weekData.highestScoringPlayer.team.name}` : 'No player scores yet'} /></section>
 
-        <div className="dashboard-grid">
-          <div className="left-column">
-            <section className="panel trend-panel"><div className="panel-heading"><div><div className="section-kicker">THE BIG PICTURE</div><h3>Scoring trends</h3></div><span className="select-pill">{leagueData.league.season} season</span></div><div className="trend-summary"><strong>Team high score</strong><span><i /> Average score by week</span></div><TrendChart darkMode={darkMode} data={leagueData.trend} average={weekData.average} /><div className="chart-footer"><span><span className="legend-dot green-dot" /> Team high</span><span><span className="legend-dash" /> League average</span><span className="trend-footnote">{leagueData.trend.length} weeks</span></div></section>
-          </div>
+        <SeasonAnalysis leagueData={leagueData} darkMode={darkMode} />
+        <div className="dashboard-grid dashboard-grid-awards">
           <div className="right-column">
             <section className="panel awards-panel"><div className="panel-heading"><div><div className="section-kicker">THE HARDWARE</div><h3>Week {week} awards</h3></div><span className={`week-history-status ${weekData.isLive ? 'history-status-live' : ''}`}>{weekData.isLive ? 'LIVE' : 'FINAL'}</span></div><div className="award-list">{awards.slice(0, 4).map((award, index) => <AwardCard award={award} featured={index === 0} key={award.title} onClick={(key) => { setFocusAwardKey(key); setActive('Awards & records') }} />)}</div><button className="standings-link" onClick={() => setActive('Awards & records')}>All awards &amp; records <ArrowRight size={14} /></button><div className="awards-foot"><Sparkles size={14} /><span>Calculated from Sleeper matchup scores.</span></div></section>
           </div>
